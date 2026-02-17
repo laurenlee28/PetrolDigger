@@ -33,12 +33,17 @@ def main():
                 pygame.quit()
                 sys.exit()
             
-            # 방향키 조작
+            # 키를 눌렀을 때 (이동 시작)
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_UP:    player_dir = [0, -speed]
-                if event.key == pygame.K_DOWN:  player_dir = [0, speed]
-                if event.key == pygame.K_LEFT:  player_dir = [-speed, 0]
-                if event.key == pygame.K_RIGHT: player_dir = [speed, 0]
+                elif event.key == pygame.K_DOWN:  player_dir = [0, speed]
+                elif event.key == pygame.K_LEFT:  player_dir = [-speed, 0]
+                elif event.key == pygame.K_RIGHT: player_dir = [speed, 0]
+            
+            # 키에서 손을 떼었을 때 (정지)
+            if event.type == pygame.KEYUP:
+                if event.key in [pygame.K_UP, pygame.K_DOWN, pygame.K_LEFT, pygame.K_RIGHT]:
+                    player_dir = [0, 0]
 
         # 2. 위치 업데이트 (이동 중일 때만 경로 추가)
         if player_dir != [0, 0]:
