@@ -1,6 +1,6 @@
 ﻿import "./style.css";
 import playerSpriteSheetUrl from "./assets/player.png";
-import bgTileUrl from "./assets/bg.png";
+import bgTileUrl from "./assets/bg_1.png";
 import enemySpriteSheetUrl from "./assets/enemy.png";
 import rocksSpriteSheetUrl from "./assets/rocks.png";
 import objectsSpriteSheetUrl from "./assets/objects.png";
@@ -299,7 +299,12 @@ const FIRE_FRAMES: ReadonlyArray<EnemyFrameRect> = [
 ];
 const BG_TILE_SIZE = 512;
 const BG_TILE_ALPHA = 0.15;
-const BASE_BACKGROUND = "#000000";
+const BACKGROUND_COLORS = {
+  s0: "#F1C27B",
+  s1000: "#FFD89C",
+  s2000: "#A2CDB0",
+  s3000: "#85A389",
+} as const;
 const WHITE = "#ffffff";
 const BLACK = "#000000";
 const STORAGE_KEY = "geoquest_stats_v1";
@@ -2272,13 +2277,14 @@ function render(): void {
 }
 
 function drawTiledBackground(): void {
+  const backgroundColor = getBackgroundColorByScore(Math.floor(sys.game.dist.unit));
   if (!(bgTileImage.complete && bgTileImage.naturalWidth > 0 && bgTileImage.naturalHeight > 0)) {
-    ctx.fillStyle = BASE_BACKGROUND;
+    ctx.fillStyle = backgroundColor;
     ctx.fillRect(0, 0, session.w, session.h);
     return;
   }
 
-  ctx.fillStyle = BASE_BACKGROUND;
+  ctx.fillStyle = backgroundColor;
   ctx.fillRect(0, 0, session.w, session.h);
 
   const tileW = BG_TILE_SIZE;
@@ -2297,6 +2303,19 @@ function drawTiledBackground(): void {
   }
   ctx.globalAlpha = prevAlpha;
   ctx.imageSmoothingEnabled = prevSmooth;
+}
+
+function getBackgroundColorByScore(score: number): string {
+  if (score >= 3000) {
+    return BACKGROUND_COLORS.s3000;
+  }
+  if (score >= 2000) {
+    return BACKGROUND_COLORS.s2000;
+  }
+  if (score >= 1000) {
+    return BACKGROUND_COLORS.s1000;
+  }
+  return BACKGROUND_COLORS.s0;
 }
 
 function drawEntity(entity: Entity): void {
