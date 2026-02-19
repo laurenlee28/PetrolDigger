@@ -1,0 +1,28 @@
+OIL STRIKE - Asset Image Mapping
+==================================
+
+Place your image files in this folder (/public/assets/) with the exact filenames below.
+The Vite plugin will automatically resolve `figma:asset/xxx.png` imports to these files.
+
+Required Images:
+----------------
+
+1. d01da901e5c1c7618944cece1ace6b251fdce852.png
+   → Mory character sprite (pixel art character, ~128x128 or 256x256, transparent bg)
+   → Used in: IntroScreen, TutorialScreen, DrillSiteCutscene, MolyGuide
+
+2. d049f74cec0e01585373c8b511ded7575708ff00.png
+   → Background image (sunset/desert landscape with stars, ~1920x1080)
+   → Used in: IntroScreen, TutorialScreen, HowItWorksScreen, MapSelection
+
+3. 21359fd9394536664e108bb65e37f9e02c167f36.png
+   → Logo icon (OIL STRIKE logo, transparent bg)
+   → Used in: IntroScreen (title screen)
+
+4. 6ea28a4603314189a47e9d3e85374d505ac2cf63.png
+   → Tunnel/underground background (dark tunnel scene, ~1920x1080)
+   → Used in: DrillSiteCutscene
+
+Quick Start:
+   If you don't have the original assets yet, create simple placeholder PNGs
+   with the filenames above and place them here. The app will run with any valid image.
