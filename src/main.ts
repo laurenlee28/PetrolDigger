@@ -7,6 +7,17 @@ import objectsSpriteSheetUrl from "./assets/objects.png";
 import graveSpriteSheetUrl from "./assets/grave.png";
 import terrainSpriteSheetUrl from "./assets/terrain.png";
 import fireSpriteSheetUrl from "./assets/fire.png";
+import introBackground1Url from "./assets/intro-bg/background1.png";
+import introBackground2Url from "./assets/intro-bg/background2.png";
+import introBackground3Url from "./assets/intro-bg/background3.png";
+import introCloud1Url from "./assets/intro-bg/cloud1.png";
+import introCloud2Url from "./assets/intro-bg/cloud2.png";
+import introCloud3Url from "./assets/intro-bg/cloud3.png";
+import introCloud4Url from "./assets/intro-bg/cloud4.png";
+import introCloud5Url from "./assets/intro-bg/cloud5.png";
+import introCloud6Url from "./assets/intro-bg/cloud6.png";
+import introCloud7Url from "./assets/intro-bg/cloud7.png";
+import introCloud8Url from "./assets/intro-bg/cloud8.png";
 
 type SceneState = "menu" | "playing" | "paused" | "gameover" | "win";
 type Group = "top" | "btm" | "npc" | "enemy";
@@ -16,29 +27,10 @@ type SpawnType =
   | "enemy"
   | "rock"
   | "snag"
-  | "snagsml"
-  | "snagtall"
-  | "spin"
-  | "spiral"
-  | "block"
-  | "blockbig"
-  | "marker"
-  | "guide"
-  | "slow"
-  | "slowbig"
-  | "bump"
-  | "bumpbig"
   | "ramp"
   | "boost"
   | "life"
-  | "coin"
-  | "friend"
-  | "lure"
-  | "ambient"
-  | "finish"
-  | "checkpoint"
-  | "gate"
-  | "swap";
+  | "lure";
 type EntityType = SpawnType | "player";
 type PhaseName = "easy" | "hard" | "recovery";
 type SteerDirection = "left" | "right" | "downleft" | "downright" | "down" | "stop";
@@ -226,6 +218,16 @@ interface EnemyFrameRect {
   h: number;
 }
 
+interface IntroCloud {
+  image: HTMLImageElement;
+  xRatio: number;
+  yRatio: number;
+  scale: number;
+  drift: number;
+  speed: number;
+  phase: number;
+}
+
 const CANVAS_WIDTH = 1280;
 const CANVAS_HEIGHT = 720;
 const PLAYER_FRAME_WIDTH = 48;
@@ -291,6 +293,7 @@ const FIRE_FRAMES: ReadonlyArray<EnemyFrameRect> = [
 ];
 const BG_TILE_SIZE = 512;
 const BG_TILE_ALPHA = 0.15;
+const INTRO_BG_REVEAL_DURATION = 1.3;
 const BACKGROUND_COLORS = {
   s0: "#f1a432",
   s1000: "#fce4c0",
@@ -345,29 +348,10 @@ const ENTITY_SHEET_META: Record<SpawnType, EntitySheetMeta> = {
   },
   rock: { w: 138, h: 142, str: "crash", group: "top", hazard: true, collectible: "none", solid: true },
   snag: { w: 123, h: 142, str: "crash", group: "top", hazard: true, collectible: "none", solid: true },
-  snagsml: { w: 64, h: 64, str: "crash", group: "top", hazard: true, collectible: "none", solid: true },
-  snagtall: { w: 64, h: 128, str: "crash", group: "top", hazard: true, collectible: "none", solid: true },
-  spin: { w: 32, h: 32, str: "avoid", group: "top", hazard: true, collectible: "none", solid: true },
-  spiral: { w: 128, h: 128, str: "avoid", group: "btm", hazard: true, collectible: "none", solid: true },
-  block: { w: 128, h: 128, str: "crash", group: "top", hazard: true, collectible: "none", solid: true },
-  blockbig: { w: 192, h: 128, str: "crash", group: "top", hazard: true, collectible: "none", solid: true },
-  marker: { w: 64, h: 64, str: "crash", group: "top", hazard: true, collectible: "none", solid: true },
-  guide: { w: 32, h: 32, str: "avoid", group: "top", hazard: true, collectible: "none", solid: true },
-  slow: { w: 64, h: 64, str: "avoid", group: "btm", hazard: true, collectible: "none", solid: true },
-  slowbig: { w: 192, h: 64, str: "avoid", group: "btm", hazard: true, collectible: "none", solid: true },
-  bump: { w: 64, h: 64, str: "avoid", group: "btm", hazard: true, collectible: "none", solid: true },
-  bumpbig: { w: 192, h: 64, str: "avoid", group: "btm", hazard: true, collectible: "none", solid: true },
   ramp: { w: 81, h: 79, str: "boost", group: "top", hazard: true, collectible: "none", solid: true },
   boost: { w: 36, h: 44, str: "boost", group: "top", hazard: false, collectible: "boost", solid: false },
   life: { w: 64, h: 64, str: "boost", group: "top", hazard: false, collectible: "life", solid: false },
-  coin: { w: 64, h: 64, str: "boost", group: "top", hazard: false, collectible: "none", solid: false },
-  friend: { w: 64, h: 64, str: "boost", group: "top", hazard: false, collectible: "none", solid: false },
   lure: { w: 60, h: 94, str: "avoid", group: "top", hazard: true, collectible: "none", solid: true },
-  ambient: { w: 64, h: 64, str: "", group: "btm", hazard: false, collectible: "none", solid: false },
-  finish: { w: 384, h: 192, str: "boost", group: "top", hazard: false, collectible: "none", solid: false },
-  checkpoint: { w: 384, h: 192, str: "boost", group: "top", hazard: false, collectible: "none", solid: false },
-  gate: { w: 192, h: 64, str: "boost", group: "btm", hazard: false, collectible: "none", solid: false },
-  swap: { w: 256, h: 256, str: "boost", group: "btm", hazard: false, collectible: "none", solid: false },
 };
 
 const app = document.querySelector<HTMLDivElement>("#app");
@@ -381,11 +365,28 @@ root.className = "game-root";
 const hud = document.createElement("div");
 hud.className = "hud";
 
-const hpText = document.createElement("span");
-const highScoreText = document.createElement("span");
-const boostText = document.createElement("span");
+const hpMeter = document.createElement("div");
+hpMeter.className = "hud-meter hp-meter";
+const hpSlots = Array.from({ length: 3 }, () => {
+  const slot = document.createElement("span");
+  slot.className = "meter-slot hp-full";
+  return slot;
+});
+hpMeter.append(...hpSlots);
 
-hud.append(hpText, highScoreText, boostText);
+const highScoreText = document.createElement("span");
+highScoreText.className = "hud-score";
+
+const boostMeter = document.createElement("div");
+boostMeter.className = "hud-meter boost-meter";
+const boostSlots = Array.from({ length: 3 }, () => {
+  const slot = document.createElement("span");
+  slot.className = "meter-slot boost-empty";
+  return slot;
+});
+boostMeter.append(...boostSlots);
+
+hud.append(hpMeter, highScoreText, boostMeter);
 
 const stage = document.createElement("div");
 stage.className = "stage";
@@ -445,6 +446,25 @@ const fireSpriteSheet = new Image();
 fireSpriteSheet.src = fireSpriteSheetUrl;
 const bgTileImage = new Image();
 bgTileImage.src = bgTileUrl;
+const introBackgroundImages = [introBackground1Url, introBackground2Url, introBackground3Url].map((src) => {
+  const image = new Image();
+  image.src = src;
+  return image;
+});
+const introCloudImages = [
+  introCloud1Url,
+  introCloud2Url,
+  introCloud3Url,
+  introCloud4Url,
+  introCloud5Url,
+  introCloud6Url,
+  introCloud7Url,
+  introCloud8Url,
+].map((src) => {
+  const image = new Image();
+  image.src = src;
+  return image;
+});
 
 const session = {
   w: CANVAS_WIDTH,
@@ -573,6 +593,8 @@ let boostDistanceLeft = 0;
 let boostTrailTick = 0;
 let lastDownTapTime = -10;
 let fxId = 0;
+let introMenuElapsed = 0;
+const introClouds: IntroCloud[] = [];
 
 const player: PlayerState = {
   pos: { x: session.x, y: session.y },
@@ -615,6 +637,7 @@ const sys = {
 resizeViewport();
 window.addEventListener("resize", resizeViewport);
 createSleepingObjects();
+resetIntroPresentation();
 resetRunState();
 wireInput();
 wireButtons();
@@ -634,6 +657,7 @@ let lastFrameTime = performance.now();
 
 function updateScene(dt: number): void {
   if (scene === "menu") {
+    introMenuElapsed += dt;
     if (pendingStart) {
       pendingStart = false;
       startNewRun();
@@ -869,7 +893,11 @@ function finishRun(reason: "obstacle" | "enemy" | "win"): void {
 }
 
 function setScene(next: SceneState): void {
+  const prev = scene;
   scene = next;
+  if (next === "menu" && prev !== "menu") {
+    resetIntroPresentation();
+  }
   uiDirty = true;
   syncOverlay();
   updateHUD();
@@ -882,7 +910,7 @@ function syncOverlay(): void {
     stage.classList.remove("gameover-blur");
     overlay.classList.remove("hidden");
     overlayActions.classList.remove("hidden");
-    overlayTitle.textContent = "Geosteering Quest";
+    setAnimatedOverlayTitle("Geosteering Quest");
     overlayPrompt.textContent = "Game Start";
     overlayMessage.textContent = "";
     return;
@@ -894,7 +922,7 @@ function syncOverlay(): void {
     stage.classList.remove("gameover-blur");
     overlay.classList.remove("hidden");
     overlayActions.classList.add("hidden");
-    overlayTitle.textContent = "paused";
+    setPlainOverlayTitle("paused");
     overlayPrompt.textContent = "press space to resume";
     overlayMessage.textContent = `score ${currentScore}`;
     return;
@@ -906,7 +934,7 @@ function syncOverlay(): void {
     stage.classList.add("gameover-blur");
     overlay.classList.remove("hidden");
     overlayActions.classList.add("hidden");
-    overlayTitle.textContent = "game over";
+    setPlainOverlayTitle("game over");
     overlayPrompt.textContent = "press space to return menu";
     const recordText = sys.game.highScore ? " | new high score!" : "";
     overlayMessage.textContent = `${gameOverReason} | score ${currentScore}${recordText}`;
@@ -919,7 +947,7 @@ function syncOverlay(): void {
     stage.classList.add("gameover-blur");
     overlay.classList.remove("hidden");
     overlayActions.classList.add("hidden");
-    overlayTitle.textContent = "win";
+    setPlainOverlayTitle("win");
     overlayPrompt.textContent = "press space to return menu";
     const recordText = sys.game.highScore ? " | new high score!" : "";
     overlayMessage.textContent = `${gameOverReason} | score ${currentScore}${recordText}`;
@@ -933,13 +961,13 @@ function syncOverlay(): void {
 }
 
 function updateHUD(): void {
-  hpText.textContent = `HP ${sys.game.lives.current}/${sys.game.lives.max}`;
+  applyMeterState(hpSlots, sys.game.lives.current, "hp-full", "hp-empty");
   if (scene === "playing" || scene === "paused") {
     highScoreText.textContent = `★ ${currentScore}`;
   } else {
-    highScoreText.textContent = `최고기록 ${stats.highScore}`;
+    highScoreText.textContent = `HIGH ${stats.highScore}`;
   }
-  boostText.textContent = `부스트 ${sys.game.boosts.current}/${sys.game.boosts.max}`;
+  applyMeterState(boostSlots, sys.game.boosts.current, "boost-full", "boost-empty");
   if (uiDirty) {
     syncOverlay();
     uiDirty = false;
@@ -956,6 +984,79 @@ function wireButtons(): void {
       pendingRestart = true;
     }
   });
+
+  overlayHowToPlay.addEventListener("click", () => {
+    if (scene !== "menu") {
+      return;
+    }
+    overlayMessage.textContent = "Move: Arrow keys or WASD\nBoost: double tap Down / S\nPause: Space, Esc, or P";
+  });
+
+  overlayScoreBoard.addEventListener("click", () => {
+    if (scene !== "menu") {
+      return;
+    }
+    overlayMessage.textContent = `High Score: ${stats.highScore}\nPlays: ${stats.plays}`;
+  });
+}
+
+function setPlainOverlayTitle(text: string): void {
+  overlayTitle.classList.remove("is-animated");
+  overlayTitle.replaceChildren();
+  overlayTitle.textContent = text;
+}
+
+function setAnimatedOverlayTitle(text: string): void {
+  overlayTitle.classList.remove("is-animated");
+  overlayTitle.replaceChildren();
+
+  let letterIndex = 0;
+  for (const char of text) {
+    const letter = document.createElement("span");
+    letter.className = "title-letter";
+    if (char === " ") {
+      letter.classList.add("title-space");
+      letter.innerHTML = "&nbsp;";
+    } else {
+      letter.textContent = char;
+      letter.style.animationDelay = `${letterIndex * 0.045}s`;
+      letterIndex += 1;
+    }
+    overlayTitle.append(letter);
+  }
+
+  void overlayTitle.offsetWidth;
+  overlayTitle.classList.add("is-animated");
+}
+
+function applyMeterState(slots: HTMLSpanElement[], filled: number, filledClass: string, emptyClass: string): void {
+  for (let i = 0; i < slots.length; i += 1) {
+    const slot = slots[i];
+    if (i < filled) {
+      slot.className = `meter-slot ${filledClass}`;
+    } else {
+      slot.className = `meter-slot ${emptyClass}`;
+    }
+  }
+}
+
+function resetIntroPresentation(): void {
+  introMenuElapsed = 0;
+  introClouds.length = 0;
+  const randomClouds = [...introCloudImages];
+  randomClouds.sort(() => Math.random() - 0.5);
+
+  for (const cloudImage of randomClouds) {
+    introClouds.push({
+      image: cloudImage,
+      xRatio: 0.08 + Math.random() * 0.84,
+      yRatio: 0.06 + Math.random() * 0.36,
+      scale: 0.75 + Math.random() * 0.55,
+      drift: 8 + Math.random() * 20,
+      speed: 0.4 + Math.random() * 0.8,
+      phase: Math.random() * Math.PI * 2,
+    });
+  }
 }
 
 function wireInput(): void {
@@ -1729,31 +1830,12 @@ function createSleepingObjects(): void {
   const seed: Record<SpawnType, number> = {
     rock: 40,
     snag: 40,
-    snagsml: 20,
-    snagtall: 5,
-    spin: 10,
     ramp: 6,
     lure: 3,
-    slow: 20,
-    slowbig: 10,
-    bump: 20,
-    bumpbig: 10,
-    coin: 2,
     boost: 2,
     life: 1,
-    spiral: 5,
-    ambient: 10,
-    blockbig: 6,
-    block: 4,
-    friend: 1,
     enemy: 2,
     npc: 10,
-    marker: 0,
-    guide: 0,
-    finish: 0,
-    checkpoint: 0,
-    gate: 0,
-    swap: 0,
   };
 
   const entries = Object.entries(seed) as [SpawnType, number][];
@@ -2318,6 +2400,11 @@ function render(): void {
 }
 
 function drawTiledBackground(): void {
+  if (scene === "menu") {
+    drawIntroBackground();
+    return;
+  }
+
   const backgroundColor = getBackgroundColorByScore(currentScore);
   if (!(bgTileImage.complete && bgTileImage.naturalWidth > 0 && bgTileImage.naturalHeight > 0)) {
     ctx.fillStyle = backgroundColor;
@@ -2344,6 +2431,72 @@ function drawTiledBackground(): void {
   }
   ctx.globalAlpha = prevAlpha;
   ctx.imageSmoothingEnabled = prevSmooth;
+}
+
+function drawIntroBackground(): void {
+  ctx.fillStyle = BLACK;
+  ctx.fillRect(0, 0, session.w, session.h);
+
+  const total = INTRO_BG_REVEAL_DURATION;
+  const firstProgress = clamp(introMenuElapsed / (total * 0.38), 0, 1);
+  const secondProgress = clamp((introMenuElapsed - total * 0.28) / (total * 0.34), 0, 1);
+  const thirdProgress = clamp((introMenuElapsed - total * 0.58) / (total * 0.42), 0, 1);
+  const progress = [firstProgress, secondProgress, thirdProgress];
+
+  const prevAlpha = ctx.globalAlpha;
+  for (let i = 0; i < introBackgroundImages.length; i += 1) {
+    const image = introBackgroundImages[i];
+    const alpha = progress[i] ?? 0;
+    if (alpha <= 0) {
+      continue;
+    }
+    drawCoverImage(image, alpha);
+  }
+
+  const cloudsAlpha = thirdProgress;
+  if (cloudsAlpha > 0) {
+    const time = introMenuElapsed;
+    for (const cloud of introClouds) {
+      const image = cloud.image;
+      if (!(image.complete && image.naturalWidth > 0 && image.naturalHeight > 0)) {
+        continue;
+      }
+      const px = cloud.xRatio * session.w + Math.sin(time * cloud.speed + cloud.phase) * cloud.drift;
+      const py = cloud.yRatio * session.h + Math.cos(time * cloud.speed * 0.7 + cloud.phase) * (cloud.drift * 0.4);
+      const drawW = image.naturalWidth * cloud.scale;
+      const drawH = image.naturalHeight * cloud.scale;
+      ctx.globalAlpha = 0.7 * cloudsAlpha;
+      ctx.drawImage(image, Math.floor(px - drawW * 0.5), Math.floor(py), Math.floor(drawW), Math.floor(drawH));
+    }
+  }
+
+  ctx.globalAlpha = prevAlpha;
+}
+
+function drawCoverImage(image: HTMLImageElement, alpha = 1): void {
+  if (!(image.complete && image.naturalWidth > 0 && image.naturalHeight > 0)) {
+    return;
+  }
+
+  const sourceRatio = image.naturalWidth / image.naturalHeight;
+  const targetRatio = session.w / session.h;
+  let sx = 0;
+  let sy = 0;
+  let sw = image.naturalWidth;
+  let sh = image.naturalHeight;
+
+  if (sourceRatio > targetRatio) {
+    sw = image.naturalHeight * targetRatio;
+    sx = (image.naturalWidth - sw) * 0.5;
+  } else {
+    sh = image.naturalWidth / targetRatio;
+    sy = (image.naturalHeight - sh) * 0.5;
+  }
+
+  const prevAlpha = ctx.globalAlpha;
+  ctx.globalAlpha = alpha;
+  ctx.drawImage(image, sx, sy, sw, sh, 0, 0, session.w, session.h);
+  ctx.globalAlpha = prevAlpha;
 }
 
 function getBackgroundColorByScore(score: number): string {
