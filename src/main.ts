@@ -21,6 +21,9 @@ import introCloud5Url from "./assets/intro-bg/cloud5.png";
 import introCloud6Url from "./assets/intro-bg/cloud6.png";
 import introCloud7Url from "./assets/intro-bg/cloud7.png";
 import introCloud8Url from "./assets/intro-bg/cloud8.png";
+import introThemeUrl from "./assets/audio/IntroTheme.mp3";
+import failThemeUrl from "./assets/audio/FailTheme.mp3";
+import winThemeUrl from "./assets/audio/WinTheme.mp3";
 
 type SceneState = "menu" | "playing" | "paused" | "gameover" | "win";
 type Group = "top" | "btm" | "npc" | "enemy";
@@ -248,6 +251,11 @@ interface IntroOreSprite {
   scale: number;
 }
 
+interface PathPoint {
+  x: number;
+  score: number;
+}
+
 type StratumTexture = "mine" | "rubble";
 
 interface StratumConfig {
@@ -441,6 +449,18 @@ const BOOST_BREAK_SHAKE_MAX_STRENGTH = 26;
 const BOOST_BREAK_SHAKE_MIN_DURATION = 0.09;
 const BOOST_BREAK_SHAKE_MAX_DURATION = 0.22;
 const VIGNETTE_INTENSITY_MULTIPLIER = 3;
+const STRATUM_SPEED_MULTIPLIER_STEP = 1.2;
+const MINIMAP_CANVAS_W = 640;
+const MINIMAP_CANVAS_H = 440;
+const MINIMAP_PADDING = 0;
+const MINIMAP_STRATUM_SPAN_SCORE = 1000;
+const MINIMAP_SCORE_MAX = MINIMAP_STRATUM_SPAN_SCORE * 4;
+const MINIMAP_PATH_MAX_POINTS = 2200;
+const MINIMAP_PATH_SAMPLE_SCORE_STEP = 7;
+const MINIMAP_PATH_SAMPLE_X_STEP = 6;
+const MENU_BUTTON_FONT_PX = 48;
+const AUDIO_LABEL_ON = "Audio: ON";
+const AUDIO_LABEL_OFF = "Audio: OFF";
 const WIN_TARGET_SCORE = 5000;
 const SCORE_SCALE = 3.75;
 
@@ -533,9 +553,22 @@ overlayActions.append(overlayHowToPlay, overlayScoreBoard);
 const overlayMessage = document.createElement("div");
 overlayMessage.className = "overlay-message";
 
-overlay.append(overlayTitle, overlayPrompt, overlayActions, overlayMessage);
+const overlayMinimap = document.createElement("canvas");
+overlayMinimap.className = "overlay-minimap hidden";
+overlayMinimap.width = MINIMAP_CANVAS_W;
+overlayMinimap.height = MINIMAP_CANVAS_H;
+const overlayMinimapCtx = overlayMinimap.getContext("2d") as CanvasRenderingContext2D;
+
+const audioToggle = document.createElement("button");
+audioToggle.className = "audio-toggle";
+audioToggle.type = "button";
+audioToggle.textContent = AUDIO_LABEL_ON;
+audioToggle.setAttribute("aria-label", "Toggle Audio");
+audioToggle.setAttribute("aria-pressed", "true");
+
+overlay.append(overlayTitle, overlayPrompt, overlayActions, overlayMessage, overlayMinimap);
 stage.append(canvas, overlay);
-root.append(hud, stage);
+root.append(hud, stage, audioToggle);
 app.replaceChildren(root);
 
 const ctx = canvas.getContext("2d") as CanvasRenderingContext2D;
@@ -557,6 +590,15 @@ const fireSpriteSheet = new Image();
 fireSpriteSheet.src = fireSpriteSheetUrl;
 const oreSpriteSheet = new Image();
 oreSpriteSheet.src = oreSpriteSheetUrl;
+const introThemeAudio = new Audio(introThemeUrl);
+introThemeAudio.loop = true;
+introThemeAudio.preload = "auto";
+const failThemeAudio = new Audio(failThemeUrl);
+failThemeAudio.loop = true;
+failThemeAudio.preload = "auto";
+const winThemeAudio = new Audio(winThemeUrl);
+winThemeAudio.loop = true;
+winThemeAudio.preload = "auto";
 const gameplayTextureImages: Record<StratumTexture, HTMLImageElement> = {
   mine: new Image(),
   rubble: new Image(),
@@ -679,6 +721,8 @@ const pressedKeys = new Set<string>();
 let pendingStart = false;
 let pendingRestart = false;
 let pendingPauseToggle = false;
+let audioEnabled = true;
+let audioInteracted = false;
 
 const world = {
   top: [] as Entity[],
@@ -717,6 +761,7 @@ let cameraShakeDuration = 0;
 let cameraShakeStrength = 0;
 const cameraShakeOffset: Vec2 = { x: 0, y: 0 };
 const cameraEventOffset: Vec2 = { x: 0, y: 0 };
+const runPath: PathPoint[] = [];
 const wolfEncounter = {
   triggered: false,
   active: false,
@@ -875,6 +920,7 @@ function updateScene(dt: number): void {
   mergeAll();
 
   currentScore = Math.floor(sys.game.dist.unit * SCORE_SCALE);
+  recordRunPathPoint();
   if (!wolfEncounter.triggered && currentScore >= WOLF_EVENT_TRIGGER_SCORE) {
     startWolfEncounter();
     updateHUD();
@@ -955,6 +1001,7 @@ function resizeViewport(): void {
 
   player.hitbox.x = player.pos.x - player.hitbox.w / 2;
   player.hitbox.y = player.pos.y - player.hitbox.h / 2;
+  applyMenuButtonFontSize(scene === "menu");
 }
 
 function updateGridAndSpawnBase(): void {
@@ -1020,6 +1067,7 @@ function resetRunState(): void {
   stratumBanner.timer = stratumBanner.duration;
   resetSpawnTimers();
   resetCameraShake();
+  resetRunPath();
 
   recentClusters.length = 0;
   world.top = sleepAll(world.top);
@@ -1044,6 +1092,7 @@ function finishRun(reason: "obstacle" | "enemy" | "win"): void {
     return;
   }
 
+  recordRunPathPoint(true);
   sys.game.finish = true;
   sys.game.caught = reason === "enemy";
   gameOverReason =
@@ -1074,40 +1123,58 @@ function setScene(next: SceneState): void {
   }
   if (next === "menu" && prev !== "menu") {
     resetIntroPresentation();
+    introThemeAudio.currentTime = 0;
+  }
+  if (next === "gameover" && prev !== "gameover") {
+    failThemeAudio.currentTime = 0;
+  }
+  if (next === "win" && prev !== "win") {
+    winThemeAudio.currentTime = 0;
   }
   uiDirty = true;
   syncOverlay();
   updateHUD();
+  syncSceneAudio();
 }
 
 function syncOverlay(): void {
   if (scene === "menu") {
     root.classList.add("menu-ui");
     root.classList.remove("gameover-ui");
+    root.classList.remove("result-fail-ui");
+    root.classList.remove("result-win-ui");
     stage.classList.remove("gameover-blur");
     overlay.classList.remove("hidden");
     overlayActions.classList.remove("hidden");
     setAnimatedOverlayTitle("Geosteering Quest");
     overlayPrompt.textContent = "Game Start";
     overlayMessage.textContent = "";
+    applyMenuButtonFontSize(true);
+    overlayMinimap.classList.add("hidden");
     return;
   }
 
   if (scene === "paused") {
     root.classList.remove("menu-ui");
     root.classList.remove("gameover-ui");
+    root.classList.remove("result-fail-ui");
+    root.classList.remove("result-win-ui");
     stage.classList.remove("gameover-blur");
     overlay.classList.remove("hidden");
     overlayActions.classList.add("hidden");
     setPlainOverlayTitle("paused");
     overlayPrompt.textContent = "press space to resume";
     overlayMessage.textContent = `score ${currentScore}`;
+    applyMenuButtonFontSize(false);
+    overlayMinimap.classList.add("hidden");
     return;
   }
 
   if (scene === "gameover") {
     root.classList.remove("menu-ui");
     root.classList.add("gameover-ui");
+    root.classList.add("result-fail-ui");
+    root.classList.remove("result-win-ui");
     stage.classList.add("gameover-blur");
     overlay.classList.remove("hidden");
     overlayActions.classList.add("hidden");
@@ -1115,12 +1182,17 @@ function syncOverlay(): void {
     overlayPrompt.textContent = "press space to return menu";
     const recordText = sys.game.highScore ? " | new high score!" : "";
     overlayMessage.textContent = `${gameOverReason} | score ${currentScore}${recordText}`;
+    applyMenuButtonFontSize(false);
+    overlayMinimap.classList.remove("hidden");
+    drawRunPathMinimap();
     return;
   }
 
   if (scene === "win") {
     root.classList.remove("menu-ui");
     root.classList.add("gameover-ui");
+    root.classList.remove("result-fail-ui");
+    root.classList.add("result-win-ui");
     stage.classList.add("gameover-blur");
     overlay.classList.remove("hidden");
     overlayActions.classList.add("hidden");
@@ -1128,13 +1200,251 @@ function syncOverlay(): void {
     overlayPrompt.textContent = "press space to return menu";
     const recordText = sys.game.highScore ? " | new high score!" : "";
     overlayMessage.textContent = `${gameOverReason} | score ${currentScore}${recordText}`;
+    applyMenuButtonFontSize(false);
+    overlayMinimap.classList.add("hidden");
     return;
   }
 
   root.classList.remove("menu-ui");
   root.classList.remove("gameover-ui");
+  root.classList.remove("result-fail-ui");
+  root.classList.remove("result-win-ui");
   stage.classList.remove("gameover-blur");
   overlay.classList.add("hidden");
+  overlayMinimap.classList.add("hidden");
+  applyMenuButtonFontSize(false);
+}
+
+function applyMenuButtonFontSize(enabled: boolean): void {
+  const buttons = [overlayPrompt, overlayHowToPlay, overlayScoreBoard];
+  if (!enabled) {
+    for (const button of buttons) {
+      button.style.fontSize = "";
+      button.style.lineHeight = "";
+    }
+    return;
+  }
+
+  const size = `${MENU_BUTTON_FONT_PX}px`;
+  for (const button of buttons) {
+    button.style.fontSize = size;
+    button.style.lineHeight = "1.05";
+  }
+}
+
+function setAudioToggleLabel(): void {
+  audioToggle.textContent = audioEnabled ? AUDIO_LABEL_ON : AUDIO_LABEL_OFF;
+  audioToggle.setAttribute("aria-pressed", audioEnabled ? "true" : "false");
+}
+
+function pauseAudio(track: HTMLAudioElement): void {
+  track.pause();
+}
+
+function safePlayAudio(track: HTMLAudioElement): void {
+  const promise = track.play();
+  if (typeof promise?.catch === "function") {
+    promise.catch(() => undefined);
+  }
+}
+
+function pauseAllSceneAudio(): void {
+  pauseAudio(introThemeAudio);
+  pauseAudio(failThemeAudio);
+  pauseAudio(winThemeAudio);
+}
+
+function syncSceneAudio(): void {
+  if (!audioEnabled || !audioInteracted) {
+    pauseAllSceneAudio();
+    return;
+  }
+
+  if (scene === "menu") {
+    pauseAudio(failThemeAudio);
+    pauseAudio(winThemeAudio);
+    safePlayAudio(introThemeAudio);
+    return;
+  }
+
+  if (scene === "gameover") {
+    pauseAudio(introThemeAudio);
+    pauseAudio(winThemeAudio);
+    safePlayAudio(failThemeAudio);
+    return;
+  }
+
+  if (scene === "win") {
+    pauseAudio(introThemeAudio);
+    pauseAudio(failThemeAudio);
+    safePlayAudio(winThemeAudio);
+    return;
+  }
+
+  pauseAllSceneAudio();
+}
+
+function registerAudioInteraction(): void {
+  if (!audioInteracted) {
+    audioInteracted = true;
+  }
+  syncSceneAudio();
+}
+
+function setAudioEnabled(next: boolean): void {
+  audioEnabled = next;
+  if (!audioEnabled) {
+    pauseAllSceneAudio();
+  } else {
+    registerAudioInteraction();
+  }
+  setAudioToggleLabel();
+}
+
+function resetRunPath(): void {
+  runPath.length = 0;
+  runPath.push({ x: sys.game.dist.x, score: 0 });
+}
+
+function recordRunPathPoint(force = false): void {
+  const point: PathPoint = {
+    x: sys.game.dist.x,
+    score: Math.max(0, currentScore),
+  };
+  const prev = runPath[runPath.length - 1];
+  if (!prev) {
+    runPath.push(point);
+    return;
+  }
+
+  const scoreDelta = Math.abs(point.score - prev.score);
+  const xDelta = Math.abs(point.x - prev.x);
+  if (force || scoreDelta >= MINIMAP_PATH_SAMPLE_SCORE_STEP || xDelta >= MINIMAP_PATH_SAMPLE_X_STEP) {
+    runPath.push(point);
+    if (runPath.length > MINIMAP_PATH_MAX_POINTS) {
+      runPath.splice(0, runPath.length - MINIMAP_PATH_MAX_POINTS);
+    }
+  }
+}
+
+function drawRunPathMinimap(): void {
+  const ctx2d = overlayMinimapCtx;
+  const w = overlayMinimap.width;
+  const h = overlayMinimap.height;
+  const pad = MINIMAP_PADDING;
+  const plotX = pad;
+  const plotY = pad;
+  const plotW = w - pad * 2;
+  const plotH = h - pad * 2;
+
+  ctx2d.clearRect(0, 0, w, h);
+  ctx2d.fillStyle = "rgba(8,8,10,0.88)";
+  ctx2d.fillRect(0, 0, w, h);
+  const bandH = plotH / 4;
+  for (let i = 0; i < 4; i += 1) {
+    const cfg = getStratumConfig(i + 1);
+    const y0 = Math.floor(plotY + bandH * i);
+    const y1 = i === 3 ? Math.ceil(plotY + plotH) : Math.ceil(y0 + bandH);
+
+    const bandGradient = ctx2d.createLinearGradient(0, y0, 0, y1);
+    bandGradient.addColorStop(0, cfg.colorTop);
+    bandGradient.addColorStop(1, cfg.colorBottom);
+    ctx2d.fillStyle = bandGradient;
+    ctx2d.fillRect(plotX, y0, plotW, y1 - y0);
+
+    const texture = gameplayTextureImages[cfg.texture];
+    if (texture.complete && texture.naturalWidth > 0 && texture.naturalHeight > 0) {
+      const prevAlpha = ctx2d.globalAlpha;
+      const tile = 112;
+      ctx2d.save();
+      ctx2d.beginPath();
+      ctx2d.rect(plotX, y0, plotW, y1 - y0);
+      ctx2d.clip();
+      ctx2d.globalAlpha = clamp(cfg.textureAlpha * 1.15, 0.12, 0.3);
+      for (let tx = plotX - tile; tx < plotX + plotW + tile; tx += tile) {
+        for (let ty = y0 - tile; ty < y1 + tile; ty += tile) {
+          ctx2d.drawImage(texture, tx, ty, tile, tile);
+        }
+      }
+      // Tint texture to stratum colors so minimap bands match gameplay palette.
+      ctx2d.globalCompositeOperation = "multiply";
+      ctx2d.globalAlpha = 0.42;
+      ctx2d.fillStyle = bandGradient;
+      ctx2d.fillRect(plotX, y0, plotW, y1 - y0);
+      ctx2d.restore();
+      ctx2d.globalAlpha = prevAlpha;
+    }
+
+    if (i > 0) {
+      ctx2d.strokeStyle = "rgba(255,255,255,0.42)";
+      ctx2d.lineWidth = 2;
+      ctx2d.beginPath();
+      ctx2d.moveTo(plotX, y0);
+      ctx2d.lineTo(plotX + plotW, y0);
+      ctx2d.stroke();
+    }
+
+    ctx2d.fillStyle = "rgba(255,255,255,0.9)";
+    const labelFontPx = Math.round(clamp((y1 - y0) * 0.24, 20, 34));
+    ctx2d.font = `${labelFontPx}px "BitPotion", sans-serif`;
+    ctx2d.textAlign = "left";
+    ctx2d.textBaseline = "top";
+    ctx2d.lineWidth = 3;
+    ctx2d.strokeStyle = "rgba(0,0,0,0.45)";
+    ctx2d.strokeText(`S${i + 1}`, plotX + 10, y0 + 8);
+    ctx2d.fillText(`S${i + 1}`, plotX + 10, y0 + 8);
+  }
+
+  if (runPath.length === 0) {
+    return;
+  }
+
+  let minX = runPath[0]?.x ?? 0;
+  let maxX = runPath[0]?.x ?? 0;
+  for (const point of runPath) {
+    minX = Math.min(minX, point.x);
+    maxX = Math.max(maxX, point.x);
+  }
+  const xSpan = Math.max(160, maxX - minX);
+  const xPad = Math.max(24, xSpan * 0.12);
+  const xMin = minX - xPad;
+  const xMax = maxX + xPad;
+  const xRange = Math.max(1, xMax - xMin);
+
+  const toMapX = (value: number): number => plotX + ((value - xMin) / xRange) * plotW;
+  const toMapY = (value: number): number => plotY + (clamp(value, 0, MINIMAP_SCORE_MAX) / MINIMAP_SCORE_MAX) * plotH;
+
+  ctx2d.strokeStyle = "rgba(235,245,255,0.95)";
+  ctx2d.lineWidth = 4;
+  ctx2d.lineJoin = "round";
+  ctx2d.lineCap = "round";
+  ctx2d.beginPath();
+  for (let i = 0; i < runPath.length; i += 1) {
+    const point = runPath[i];
+    const px = toMapX(point.x);
+    const py = toMapY(point.score);
+    if (i === 0) {
+      ctx2d.moveTo(px, py);
+    } else {
+      ctx2d.lineTo(px, py);
+    }
+  }
+  ctx2d.stroke();
+
+  const start = runPath[0] ?? { x: 0, score: 0 };
+  const end = runPath[runPath.length - 1] ?? start;
+  ctx2d.fillStyle = "#58ffa1";
+  ctx2d.beginPath();
+  ctx2d.arc(toMapX(start.x), toMapY(start.score), 7, 0, Math.PI * 2);
+  ctx2d.fill();
+  ctx2d.strokeStyle = "rgba(0,0,0,0.5)";
+  ctx2d.lineWidth = 2;
+  ctx2d.stroke();
+  ctx2d.fillStyle = "#ff7b7b";
+  ctx2d.beginPath();
+  ctx2d.arc(toMapX(end.x), toMapY(end.score), 7, 0, Math.PI * 2);
+  ctx2d.fill();
+  ctx2d.stroke();
 }
 
 function updateHUD(): void {
@@ -1207,7 +1517,13 @@ function getStratumConfig(level: number): StratumConfig {
 }
 
 function wireButtons(): void {
+  audioToggle.addEventListener("click", () => {
+    registerAudioInteraction();
+    setAudioEnabled(!audioEnabled);
+  });
+
   overlayPrompt.addEventListener("click", () => {
+    registerAudioInteraction();
     if (scene === "menu") {
       pendingStart = true;
     } else if (scene === "paused") {
@@ -1218,6 +1534,7 @@ function wireButtons(): void {
   });
 
   overlayHowToPlay.addEventListener("click", () => {
+    registerAudioInteraction();
     if (scene !== "menu") {
       return;
     }
@@ -1225,6 +1542,7 @@ function wireButtons(): void {
   });
 
   overlayScoreBoard.addEventListener("click", () => {
+    registerAudioInteraction();
     if (scene !== "menu") {
       return;
     }
@@ -1335,7 +1653,12 @@ function resetIntroPresentation(): void {
 }
 
 function wireInput(): void {
+  window.addEventListener("pointerdown", () => {
+    registerAudioInteraction();
+  });
+
   window.addEventListener("keydown", (event: KeyboardEvent) => {
+    registerAudioInteraction();
     const code = event.code;
     const firstPress = !pressedKeys.has(code);
 
@@ -1581,8 +1904,24 @@ function applySpawnerPhase(phase: PhaseConfig): void {
   spawner.npc.inc = Math.max(60, Math.round(spawnBase.npc * phase.npcMul));
 }
 
+function getStratumSpeedMultiplier(level: number): number {
+  const clamped = clamp(level, 1, 4);
+  return Math.pow(STRATUM_SPEED_MULTIPLIER_STEP, clamped - 1);
+}
+
+function getActiveSpeedMultiplier(): number {
+  const baseMul = getStratumSpeedMultiplier(activeStratumLevel);
+  if (!stratumTransition.active) {
+    return baseMul;
+  }
+  const fromMul = getStratumSpeedMultiplier(stratumTransition.from);
+  const toMul = getStratumSpeedMultiplier(stratumTransition.to);
+  const t = easeOutCubic(stratumTransition.progress);
+  return fromMul * (1 - t) + toMul * t;
+}
+
 function updateWorldSpeed(dt: number, phase: PhaseConfig): void {
-  const base = BASE_WORLD_SPEED + sys.game.time.elapsed * 1.15;
+  const base = (BASE_WORLD_SPEED + sys.game.time.elapsed * 1.15) * getActiveSpeedMultiplier();
   const brakeMul = input.isBrake ? 0.74 : 1;
   const stopMul = playerDir === "stop" ? 0 : 1;
   const boostMul = isBoostActive() ? BOOST_SPEED_MULTIPLIER : 1;

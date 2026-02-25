@@ -234,6 +234,70 @@ body {
   text-shadow: 0 0 10px rgba(0, 0, 0, 0.75);
 }
 
+.game-root.menu-ui .overlay-title,
+.game-root.gameover-ui .overlay-title {
+  color :rgba(219, 185, 100, 0.807);
+  font-size: clamp(84px, 16vw, 176px);
+}
+
+.game-root.result-fail-ui .overlay-title {
+  color: #ff3a3a;
+  text-shadow: 0 0 12px rgba(0, 0, 0, 0.7), 0 0 22px rgba(255, 58, 58, 0.45);
+}
+
+.game-root.result-win-ui .overlay-title {
+  color: #2de35f;
+  text-shadow: 0 0 12px rgba(0, 0, 0, 0.7), 0 0 22px rgba(45, 227, 95, 0.45);
+}
+
+.game-root.gameover-ui .overlay-button {
+  font-size: clamp(28px, 4vw, 44px);
+}
+
+.game-root.menu-ui .overlay-message,
+.game-root.gameover-ui .overlay-message {
+  font-size: clamp(28px, 3.6vw, 40px);
+}
+
+.overlay-minimap {
+  margin-top: 12px;
+  width: min(72vw, 320px);
+  height: auto;
+  image-rendering: pixelated;
+  border: 2px solid rgba(255, 255, 255, 0.84);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.game-root.gameover-ui .overlay-minimap {
+  width: min(92vw, 640px);
+}
+
+.overlay-minimap.hidden {
+  display: none;
+}
+
+.audio-toggle {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 30;
+  pointer-events: auto;
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  background: rgba(0, 0, 0, 0.58);
+  color: #fff;
+  font-family: "BitPotion", sans-serif;
+  font-size: clamp(12px, 1.2vw, 18px);
+  letter-spacing: 0.04em;
+  line-height: 1;
+  padding: 8px 12px;
+  cursor: pointer;
+  text-shadow: 0 0 6px rgba(0, 0, 0, 0.85);
+}
+
+.audio-toggle:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
 @keyframes title-drill-drop {
   0% {
     transform: translateY(140px) scaleY(1.1);
@@ -336,5 +400,19 @@ body {
   .overlay-message {
     margin-top: 16px;
     min-height: 72px;
+  }
+
+  .overlay-minimap {
+    width: min(84vw, 300px);
+  }
+
+  .game-root.gameover-ui .overlay-minimap {
+    width: min(94vw, 560px);
+  }
+
+  .audio-toggle {
+    top: 10px;
+    right: 10px;
+    padding: 7px 10px;
   }
 }
