@@ -1,12 +1,15 @@
 ﻿import "./style.css";
 import playerSpriteSheetUrl from "./assets/drill.png";
-import bgTileUrl from "./assets/bg_1.png";
+import gameplayBgMineUrl from "./assets/gameplay-bg-mine.png";
+import gameplayBgRubbleUrl from "./assets/gameplay-bg-rubble.png";
 import enemySpriteSheetUrl from "./assets/enemy.png";
+import wolfSpriteSheetUrl from "./assets/wolf.png";
 import rocksSpriteSheetUrl from "./assets/rocks.png";
 import objectsSpriteSheetUrl from "./assets/objects.png";
 import graveSpriteSheetUrl from "./assets/grave.png";
 import terrainSpriteSheetUrl from "./assets/terrain.png";
 import fireSpriteSheetUrl from "./assets/fire.png";
+import oreSpriteSheetUrl from "./assets/ore.png";
 import introBackground1Url from "./assets/intro-bg/background1.png";
 import introBackground2Url from "./assets/intro-bg/background2.png";
 import introBackground3Url from "./assets/intro-bg/background3.png";
@@ -50,6 +53,7 @@ type EnemyFrameKey = "enemy1" | "enemy2" | "enemy3" | "enemy4" | "enemy5" | "ene
 type RockFrameKey = "rock1" | "rock2" | "rock3" | "rock4" | "rock5" | "rock6";
 type SnugFrameKey = "snug1" | "snug2" | "snug3" | "snug4";
 type BoostFrameKey = "boost1" | "boost2" | "boost3" | "boost4";
+type WolfEncounterPhase = "inactive" | "rise" | "return";
 
 interface Vec2 {
   x: number;
@@ -108,6 +112,7 @@ interface Entity {
   y: number;
   w: number;
   h: number;
+  stratumLevel: number;
   vx: number;
   vy: number;
   label: string;
@@ -228,10 +233,30 @@ interface IntroCloud {
   phase: number;
 }
 
+interface IntroOreSprite {
+  frame: EnemyFrameRect;
+  xRatio: number;
+  yRatio: number;
+  scale: number;
+}
+
+type StratumTexture = "mine" | "rubble";
+
+interface StratumConfig {
+  level: number;
+  label: string;
+  maxScore: number;
+  colorTop: string;
+  colorBottom: string;
+  texture: StratumTexture;
+  textureAlpha: number;
+  vignetteAlpha: number;
+}
+
 const CANVAS_WIDTH = 1280;
 const CANVAS_HEIGHT = 720;
-const PLAYER_FRAME_WIDTH = 48;
-const PLAYER_FRAME_HEIGHT = 47;
+const PLAYER_FRAME_WIDTH = 68;
+const PLAYER_FRAME_HEIGHT = 67;
 const PLAYER_WALK_FPS = 8;
 const BOOST_ANIMATION_FPS = 10;
 const PLAYER_FRAMES: ReadonlyArray<{ x: number; y: number; w: number; h: number }> = [
@@ -255,6 +280,7 @@ const ENEMY_FRAME_KEYS: EnemyFrameKey[] = [
   "enemy6",
   "enemy7",
 ];
+const WOLF_FRAME: EnemyFrameRect = { x: 9, y: 51, w: 238, h: 155 };
 const ROCK_FRAMES: Record<RockFrameKey, EnemyFrameRect> = {
   rock1: { x: 3, y: 585, w: 56, h: 53 },
   rock2: { x: 67, y: 582, w: 56, h: 56 },
@@ -291,15 +317,71 @@ const FIRE_FRAMES: ReadonlyArray<EnemyFrameRect> = [
   { x: 465, y: 9, w: 26, h: 50 },
   { x: 530, y: 9, w: 25, h: 50 },
 ];
+const INTRO_ORE_FRAMES: ReadonlyArray<EnemyFrameRect> = [
+  { x: 66, y: 3, w: 29, h: 28 },
+  { x: 98, y: 3, w: 29, h: 28 },
+  { x: 130, y: 3, w: 29, h: 28 },
+  { x: 162, y: 3, w: 29, h: 28 },
+];
 const BG_TILE_SIZE = 512;
-const BG_TILE_ALPHA = 0.15;
+const STRATUM_TRANSITION_DURATION = 1.2;
+const STRATUM_BANNER_DURATION = 2.1;
 const INTRO_BG_REVEAL_DURATION = 1.3;
-const BACKGROUND_COLORS = {
-  s0: "#f1a432",
-  s1000: "#fce4c0",
-  s2000: "#7fcf9a",
-  s3000: "#67826b",
-} as const;
+const CAMERA_HIT_SHAKE_DURATION = 0.2;
+const CAMERA_HIT_SHAKE_STRENGTH = 20;
+const CAMERA_SHAKE_DRAW_PAD = 48;
+const WOLF_EVENT_TRIGGER_SCORE = 4000;
+const WOLF_EVENT_RISE_DURATION = 3.0;
+const WOLF_EVENT_RETURN_DURATION = 1.2;
+const WOLF_EVENT_SPAWN_MARGIN = 28;
+const WOLF_EVENT_CAMERA_TOP_PADDING = 8;
+const WOLF_EVENT_SHAKE_MIN_AMPLITUDE = 6;
+const WOLF_EVENT_SHAKE_MAX_AMPLITUDE = 28;
+const WOLF_EVENT_SHAKE_FREQUENCY = 7.5;
+const WOLF_EVENT_BLINK_FREQUENCY = 11;
+const WOLF_EVENT_BLINK_VISIBLE_RATIO = 0.56;
+const STRATUM_CONFIGS: ReadonlyArray<StratumConfig> = [
+  {
+    level: 1,
+    label: "Stratum 1",
+    maxScore: 1000,
+    colorTop: "#f0b15c",
+    colorBottom: "#c3742e",
+    texture: "mine",
+    textureAlpha: 0.14,
+    vignetteAlpha: 0.16,
+  },
+  {
+    level: 2,
+    label: "Stratum 2",
+    maxScore: 2000,
+    colorTop: "#d39c56",
+    colorBottom: "#8f5a32",
+    texture: "mine",
+    textureAlpha: 0.17,
+    vignetteAlpha: 0.24,
+  },
+  {
+    level: 3,
+    label: "Stratum 3",
+    maxScore: 3000,
+    colorTop: "#7a6e66",
+    colorBottom: "#473f3b",
+    texture: "rubble",
+    textureAlpha: 0.2,
+    vignetteAlpha: 0.33,
+  },
+  {
+    level: 4,
+    label: "Stratum 4",
+    maxScore: 5000,
+    colorTop: "#4a4547",
+    colorBottom: "#241f24",
+    texture: "rubble",
+    textureAlpha: 0.24,
+    vignetteAlpha: 0.44,
+  },
+];
 const WHITE = "#ffffff";
 const BLACK = "#000000";
 const STORAGE_KEY = "geoquest_stats_v1";
@@ -332,7 +414,7 @@ const FX_PICKUP_BURST = 6;
 const FX_HIT_BURST = 8;
 const FX_TRAIL_TTL = 0.5;
 const FX_PARTICLE_MAX = 180;
-const WIN_TARGET_SCORE = 4000;
+const WIN_TARGET_SCORE = 5000;
 const SCORE_SCALE = 3.75;
 
 const ENTITY_SHEET_META: Record<SpawnType, EntitySheetMeta> = {
@@ -434,6 +516,8 @@ const playerSpriteSheet = new Image();
 playerSpriteSheet.src = playerSpriteSheetUrl;
 const enemySpriteSheet = new Image();
 enemySpriteSheet.src = enemySpriteSheetUrl;
+const wolfSpriteSheet = new Image();
+wolfSpriteSheet.src = wolfSpriteSheetUrl;
 const rocksSpriteSheet = new Image();
 rocksSpriteSheet.src = rocksSpriteSheetUrl;
 const objectsSpriteSheet = new Image();
@@ -444,8 +528,14 @@ const terrainSpriteSheet = new Image();
 terrainSpriteSheet.src = terrainSpriteSheetUrl;
 const fireSpriteSheet = new Image();
 fireSpriteSheet.src = fireSpriteSheetUrl;
-const bgTileImage = new Image();
-bgTileImage.src = bgTileUrl;
+const oreSpriteSheet = new Image();
+oreSpriteSheet.src = oreSpriteSheetUrl;
+const gameplayTextureImages: Record<StratumTexture, HTMLImageElement> = {
+  mine: new Image(),
+  rubble: new Image(),
+};
+gameplayTextureImages.mine.src = gameplayBgMineUrl;
+gameplayTextureImages.rubble.src = gameplayBgRubbleUrl;
 const introBackgroundImages = [introBackground1Url, introBackground2Url, introBackground3Url].map((src) => {
   const image = new Image();
   image.src = src;
@@ -594,7 +684,34 @@ let boostTrailTick = 0;
 let lastDownTapTime = -10;
 let fxId = 0;
 let introMenuElapsed = 0;
+let cameraShakeTimeLeft = 0;
+let cameraShakeDuration = 0;
+let cameraShakeStrength = 0;
+const cameraShakeOffset: Vec2 = { x: 0, y: 0 };
+const cameraEventOffset: Vec2 = { x: 0, y: 0 };
+const wolfEncounter = {
+  triggered: false,
+  active: false,
+  phase: "inactive" as WolfEncounterPhase,
+  timer: 0,
+  targetOffsetY: 0,
+  enemyId: 0,
+};
 const introClouds: IntroCloud[] = [];
+const introOreSprites: IntroOreSprite[] = [];
+let activeStratumLevel = 1;
+const stratumTransition = {
+  active: false,
+  from: 1,
+  to: 1,
+  progress: 1,
+  duration: STRATUM_TRANSITION_DURATION,
+};
+const stratumBanner = {
+  text: "Stratum 1",
+  timer: STRATUM_BANNER_DURATION,
+  duration: STRATUM_BANNER_DURATION,
+};
 
 const player: PlayerState = {
   pos: { x: session.x, y: session.y },
@@ -656,6 +773,8 @@ function loop(now: number): void {
 let lastFrameTime = performance.now();
 
 function updateScene(dt: number): void {
+  updateCameraShake(dt);
+
   if (scene === "menu") {
     introMenuElapsed += dt;
     if (pendingStart) {
@@ -673,6 +792,14 @@ function updateScene(dt: number): void {
       resetRunState();
       setScene("menu");
     }
+    updateHUD();
+    return;
+  }
+
+  if (scene === "playing" && wolfEncounter.active) {
+    pendingPauseToggle = false;
+    updateWolfEncounter(dt);
+    toastTimer = Math.max(0, toastTimer - dt);
     updateHUD();
     return;
   }
@@ -720,6 +847,12 @@ function updateScene(dt: number): void {
   mergeAll();
 
   currentScore = Math.floor(sys.game.dist.unit * SCORE_SCALE);
+  if (!wolfEncounter.triggered && currentScore >= WOLF_EVENT_TRIGGER_SCORE) {
+    startWolfEncounter();
+    updateHUD();
+    return;
+  }
+  updateStratumState(dt);
   toastTimer = Math.max(0, toastTimer - dt);
   updateHUD();
 
@@ -826,6 +959,8 @@ function resetSpawnTimers(): void {
 }
 
 function resetRunState(): void {
+  clearWolfEncounterEntity();
+  resetWolfEncounterState();
   sys.game = createGameState();
   player.pos.x = session.x;
   player.pos.y = session.y;
@@ -848,7 +983,15 @@ function resetRunState(): void {
   gameOverReason = "";
   toastText = "";
   toastTimer = 0;
+  activeStratumLevel = 1;
+  stratumTransition.active = false;
+  stratumTransition.from = 1;
+  stratumTransition.to = 1;
+  stratumTransition.progress = 1;
+  stratumBanner.text = "Stratum 1";
+  stratumBanner.timer = stratumBanner.duration;
   resetSpawnTimers();
+  resetCameraShake();
 
   recentClusters.length = 0;
   world.top = sleepAll(world.top);
@@ -895,6 +1038,11 @@ function finishRun(reason: "obstacle" | "enemy" | "win"): void {
 function setScene(next: SceneState): void {
   const prev = scene;
   scene = next;
+  if (next !== "playing" && next !== "paused") {
+    resetCameraShake();
+    clearWolfEncounterEntity();
+    resetWolfEncounterState();
+  }
   if (next === "menu" && prev !== "menu") {
     resetIntroPresentation();
   }
@@ -974,6 +1122,80 @@ function updateHUD(): void {
   }
 }
 
+function updateStratumState(dt: number): void {
+  stratumBanner.timer = Math.max(0, stratumBanner.timer - dt);
+
+  if (stratumTransition.active) {
+    stratumTransition.progress = Math.min(1, stratumTransition.progress + dt / stratumTransition.duration);
+    if (stratumTransition.progress >= 1) {
+      stratumTransition.active = false;
+      activeStratumLevel = stratumTransition.to;
+      triggerStratumBanner(activeStratumLevel);
+    }
+    return;
+  }
+
+  const target = getStratumLevelByScore(currentScore);
+  if (target > activeStratumLevel) {
+    const nextLevel = Math.min(4, activeStratumLevel + 1);
+    // Wait until previous stratum entities leave the screen.
+    if (!hasVisibleEntitiesForStratum(activeStratumLevel)) {
+      startStratumTransition(nextLevel);
+    }
+  }
+}
+
+function startStratumTransition(nextLevel: number): void {
+  if (nextLevel <= activeStratumLevel) {
+    return;
+  }
+  stratumTransition.active = true;
+  stratumTransition.from = activeStratumLevel;
+  stratumTransition.to = nextLevel;
+  stratumTransition.progress = 0;
+  stratumTransition.duration = STRATUM_TRANSITION_DURATION;
+}
+
+function triggerStratumBanner(level: number): void {
+  const cfg = getStratumConfig(level);
+  stratumBanner.text = cfg.label;
+  stratumBanner.timer = stratumBanner.duration;
+}
+
+function getStratumLevelByScore(score: number): number {
+  if (score < 1000) {
+    return 1;
+  }
+  if (score < 2000) {
+    return 2;
+  }
+  if (score < 3000) {
+    return 3;
+  }
+  return 4;
+}
+
+function getStratumConfig(level: number): StratumConfig {
+  const clamped = clamp(level, 1, STRATUM_CONFIGS.length);
+  return STRATUM_CONFIGS[clamped - 1] ?? STRATUM_CONFIGS[0];
+}
+
+function hasVisibleEntitiesForStratum(level: number): boolean {
+  const groups = [world.top, world.btm, world.npc, world.enemy];
+  for (const group of groups) {
+    for (const entity of group) {
+      if (entity.sleep || entity.stratumLevel !== level) {
+        continue;
+      }
+      if (entity.y + entity.h < -32 || entity.y > session.h + 32) {
+        continue;
+      }
+      return true;
+    }
+  }
+  return false;
+}
+
 function wireButtons(): void {
   overlayPrompt.addEventListener("click", () => {
     if (scene === "menu") {
@@ -1043,6 +1265,7 @@ function applyMeterState(slots: HTMLSpanElement[], filled: number, filledClass: 
 function resetIntroPresentation(): void {
   introMenuElapsed = 0;
   introClouds.length = 0;
+  introOreSprites.length = 0;
   const randomClouds = [...introCloudImages];
   randomClouds.sort(() => Math.random() - 0.5);
 
@@ -1055,6 +1278,48 @@ function resetIntroPresentation(): void {
       drift: 8 + Math.random() * 20,
       speed: 0.4 + Math.random() * 0.8,
       phase: Math.random() * Math.PI * 2,
+    });
+  }
+
+  const orePool: EnemyFrameRect[] = [];
+  for (const frame of INTRO_ORE_FRAMES) {
+    for (let i = 0; i < 10; i += 1) {
+      orePool.push(frame);
+    }
+  }
+  orePool.sort(() => Math.random() - 0.5);
+
+  const bg3BoxTopRatio = 0.49;
+  const bg3BoxBottomRatio = 1.0;
+  const bg3BoxHeight = bg3BoxBottomRatio - bg3BoxTopRatio;
+  const oreYMinRatio = bg3BoxTopRatio + bg3BoxHeight * 0.1;
+  const oreYMaxRatio = bg3BoxTopRatio + bg3BoxHeight * 0.99;
+
+  for (const frame of orePool) {
+    let xRatio = 0.1 + Math.random() * 0.8;
+    let yRatio = oreYMinRatio + Math.random() * (oreYMaxRatio - oreYMinRatio);
+    const scale = 1 + Math.random() * 0.55;
+
+    for (let attempts = 0; attempts < 28; attempts += 1) {
+      const candidateX = 0.1 + Math.random() * 0.8;
+      const candidateY = oreYMinRatio + Math.random() * (oreYMaxRatio - oreYMinRatio);
+      const overlaps = introOreSprites.some((sprite) => {
+        const dx = (sprite.xRatio - candidateX) * 640;
+        const dy = (sprite.yRatio - candidateY) * 640;
+        return dx * dx + dy * dy < 34 * 34;
+      });
+      if (!overlaps) {
+        xRatio = candidateX;
+        yRatio = candidateY;
+        break;
+      }
+    }
+
+    introOreSprites.push({
+      frame,
+      xRatio,
+      yRatio,
+      scale,
     });
   }
 }
@@ -1258,15 +1523,9 @@ function isBoostActive(): boolean {
 }
 
 function tryUseBoost(): void {
-  if (scene !== "playing" || isBoostActive()) {
+  if (scene !== "playing" || wolfEncounter.active || isBoostActive() || sys.game.boosts.current <= 0) {
     return;
   }
-  if (sys.game.boosts.current <= 0) {
-    toastText = "no boost";
-    toastTimer = 0.9;
-    return;
-  }
-
   sys.game.boosts.current -= 1;
   sys.game.boosts.numUsed += 1;
   boostDistanceLeft = BOOST_DISTANCE_TRACKER;
@@ -1653,9 +1912,10 @@ function buildObject(type: SpawnType, x: number, y: number, variant = ""): Entit
   }
 
   object.sleep = false;
+  object.stratumLevel = getStratumLevelByScore(currentScore);
   object.ttl = 999;
   if (object.type === "enemy") {
-    applyEnemyFrameToEntity(object);
+    applyEnemyFrameToEntity(object, variant);
   } else if (object.type === "rock") {
     applyRockFrameToEntity(object);
   } else if (object.type === "snag") {
@@ -1696,6 +1956,7 @@ function createEntity(type: EntityType, group: Group, x: number, y: number, vari
     y,
     w: meta.w,
     h: meta.h,
+    stratumLevel: 1,
     vx: 0,
     vy: 0,
     label: getEntityLabel(type),
@@ -1746,6 +2007,9 @@ function getEntityLabel(type: EntityType): string {
 }
 
 function getEnemyFrameRect(frameKey: string): EnemyFrameRect {
+  if (frameKey === "wolf") {
+    return WOLF_FRAME;
+  }
   const key = ENEMY_FRAME_KEYS.find((candidate) => candidate === frameKey);
   if (key) {
     return ENEMY_FRAMES[key];
@@ -1753,7 +2017,14 @@ function getEnemyFrameRect(frameKey: string): EnemyFrameRect {
   return ENEMY_FRAMES.enemy1;
 }
 
-function applyEnemyFrameToEntity(entity: Entity): void {
+function applyEnemyFrameToEntity(entity: Entity, preferredVariant = ""): void {
+  if (preferredVariant === "wolf") {
+    entity.variant = "wolf";
+    entity.w = WOLF_FRAME.w;
+    entity.h = WOLF_FRAME.h;
+    return;
+  }
+
   const frameKey = randIndex(ENEMY_FRAME_KEYS);
   const frame = ENEMY_FRAMES[frameKey];
   entity.variant = frameKey;
@@ -2132,6 +2403,7 @@ function onPlayerObstacleHit(): void {
   player.vel.y = 0;
   playerPose = "player_invincible";
   sys.game.lives.current = Math.max(0, sys.game.lives.current - 1);
+  triggerCameraShake(CAMERA_HIT_SHAKE_STRENGTH, CAMERA_HIT_SHAKE_DURATION);
 }
 
 function updateCollisions(): void {
@@ -2179,6 +2451,7 @@ function updateCollisions(): void {
           }
         }
         if (entity.type === "enemy") {
+          triggerCameraShake(CAMERA_HIT_SHAKE_STRENGTH, CAMERA_HIT_SHAKE_DURATION);
           finishRun("enemy");
           return;
         }
@@ -2374,7 +2647,213 @@ function updateFxSystem(dt: number, worldShift: { x: number; y: number }): void 
   fx.particles = liveParticles;
 }
 
+function triggerCameraShake(strength: number, duration: number): void {
+  cameraShakeStrength = Math.max(cameraShakeStrength, strength);
+  cameraShakeDuration = Math.max(cameraShakeDuration, duration);
+  cameraShakeTimeLeft = Math.max(cameraShakeTimeLeft, duration);
+}
+
+function updateCameraShake(dt: number): void {
+  if (cameraShakeTimeLeft <= 0 || cameraShakeStrength <= 0) {
+    cameraShakeOffset.x = 0;
+    cameraShakeOffset.y = 0;
+    return;
+  }
+
+  cameraShakeTimeLeft = Math.max(0, cameraShakeTimeLeft - dt);
+  const ratio = cameraShakeDuration > 0 ? cameraShakeTimeLeft / cameraShakeDuration : 0;
+  const intensity = cameraShakeStrength * ratio * ratio;
+  const angle = Math.random() * Math.PI * 2;
+  cameraShakeOffset.x = Math.round(Math.cos(angle) * intensity);
+  cameraShakeOffset.y = Math.round(Math.sin(angle) * intensity * 0.75);
+
+  if (cameraShakeTimeLeft <= 0) {
+    resetCameraShake();
+  }
+}
+
+function resetCameraShake(): void {
+  cameraShakeTimeLeft = 0;
+  cameraShakeDuration = 0;
+  cameraShakeStrength = 0;
+  cameraShakeOffset.x = 0;
+  cameraShakeOffset.y = 0;
+}
+
+function startWolfEncounter(): void {
+  if (scene !== "playing" || wolfEncounter.triggered) {
+    return;
+  }
+
+  wolfEncounter.triggered = true;
+  wolfEncounter.active = true;
+  wolfEncounter.phase = "rise";
+  wolfEncounter.timer = 0;
+  wolfEncounter.targetOffsetY = 0;
+  wolfEncounter.enemyId = 0;
+  cameraEventOffset.x = 0;
+  cameraEventOffset.y = 0;
+  pendingPauseToggle = false;
+  resetCameraShake();
+
+  player.vel.x = 0;
+  player.vel.y = 0;
+  player.acc.x = 0;
+  player.acc.y = 0;
+  player.pos.x = session.x;
+  player.pos.y = session.y;
+  player.hitbox.x = player.pos.x - player.hitbox.w / 2;
+  player.hitbox.y = player.pos.y - player.hitbox.h / 2;
+
+  const wolfX = session.x - WOLF_FRAME.w * 0.5;
+  const wolfY = -WOLF_FRAME.h - WOLF_EVENT_SPAWN_MARGIN;
+  const wolf = buildObject("enemy", wolfX, wolfY, "wolf");
+  wolf.hazard = false;
+  wolf.solid = false;
+  wolf.collectible = "none";
+  wolfEncounter.enemyId = wolf.id;
+  syncWolfEncounterEntity(wolf);
+  wolfEncounter.targetOffsetY = Math.max(0, WOLF_EVENT_CAMERA_TOP_PADDING - wolf.y);
+  mergeAll();
+}
+
+function updateWolfEncounter(dt: number): void {
+  if (!wolfEncounter.active) {
+    cameraEventOffset.x = 0;
+    cameraEventOffset.y = 0;
+    return;
+  }
+
+  player.vel.x = 0;
+  player.vel.y = 0;
+  player.acc.x = 0;
+  player.acc.y = 0;
+  player.pos.x = session.x;
+  player.pos.y = session.y;
+  player.hitbox.x = player.pos.x - player.hitbox.w / 2;
+  player.hitbox.y = player.pos.y - player.hitbox.h / 2;
+
+  const wolf = getWolfEncounterEntity();
+  if (wolf) {
+    syncWolfEncounterEntity(wolf);
+    wolfEncounter.targetOffsetY = Math.max(0, WOLF_EVENT_CAMERA_TOP_PADDING - wolf.y);
+  }
+
+  if (wolfEncounter.phase === "rise") {
+    wolfEncounter.timer += dt;
+    const t = clamp(wolfEncounter.timer / WOLF_EVENT_RISE_DURATION, 0, 1);
+    cameraEventOffset.y = Math.round(wolfEncounter.targetOffsetY * easeOutCubic(t));
+    if (t >= 1) {
+      wolfEncounter.phase = "return";
+      wolfEncounter.timer = 0;
+    }
+    return;
+  }
+
+  if (wolfEncounter.phase === "return") {
+    wolfEncounter.timer += dt;
+    const t = clamp(wolfEncounter.timer / WOLF_EVENT_RETURN_DURATION, 0, 1);
+    cameraEventOffset.y = Math.round(wolfEncounter.targetOffsetY * (1 - easeOutCubic(t)));
+    if (t >= 1) {
+      cameraEventOffset.y = 0;
+      wolfEncounter.active = false;
+      wolfEncounter.phase = "inactive";
+      wolfEncounter.timer = 0;
+      if (wolf) {
+        wolf.hazard = true;
+        wolf.solid = true;
+        wolf.collectible = "none";
+      }
+      mergeAll();
+    }
+  }
+}
+
+function syncWolfEncounterEntity(wolf: Entity): void {
+  const centerX = player.pos.x - wolf.w * 0.5;
+  if (wolfEncounter.active && wolfEncounter.phase === "rise") {
+    const riseProgress = clamp(wolfEncounter.timer / WOLF_EVENT_RISE_DURATION, 0, 1);
+    const amplitude =
+      WOLF_EVENT_SHAKE_MIN_AMPLITUDE +
+      (WOLF_EVENT_SHAKE_MAX_AMPLITUDE - WOLF_EVENT_SHAKE_MIN_AMPLITUDE) * riseProgress;
+    const wobble = Math.sin(wolfEncounter.timer * Math.PI * 2 * WOLF_EVENT_SHAKE_FREQUENCY) * amplitude;
+    wolf.x = centerX + wobble;
+  } else {
+    wolf.x = centerX;
+  }
+  wolf.y = -wolf.h - WOLF_EVENT_SPAWN_MARGIN;
+}
+
+function isWolfEncounterVisible(entity: Entity): boolean {
+  if (!(entity.type === "enemy" && entity.variant === "wolf")) {
+    return true;
+  }
+  if (!(wolfEncounter.active && wolfEncounter.phase === "rise")) {
+    return true;
+  }
+  const t = wolfEncounter.timer * WOLF_EVENT_BLINK_FREQUENCY;
+  const phase = t - Math.floor(t);
+  return phase < WOLF_EVENT_BLINK_VISIBLE_RATIO;
+}
+
+function getWolfEncounterEntity(): Entity | null {
+  if (wolfEncounter.enemyId <= 0) {
+    return null;
+  }
+  const wolf = world.enemy.find((entity) => entity.id === wolfEncounter.enemyId && !entity.sleep);
+  return wolf ?? null;
+}
+
+function clearWolfEncounterEntity(): void {
+  const wolf = getWolfEncounterEntity();
+  if (!wolf) {
+    wolfEncounter.enemyId = 0;
+    return;
+  }
+
+  wolf.sleep = true;
+  world.enemy = world.enemy.filter((entity) => entity.id !== wolf.id);
+  if (!world.sleeping.some((entity) => entity.id === wolf.id)) {
+    world.sleeping.push(wolf);
+  }
+  enemyRuntime.delete(wolf.id);
+  const fire = fireByEnemyId.get(wolf.id);
+  if (fire) {
+    fire.sleep = true;
+    fireByEnemyId.delete(wolf.id);
+  }
+
+  wolfEncounter.enemyId = 0;
+}
+
+function resetWolfEncounterState(): void {
+  wolfEncounter.triggered = false;
+  wolfEncounter.active = false;
+  wolfEncounter.phase = "inactive";
+  wolfEncounter.timer = 0;
+  wolfEncounter.targetOffsetY = 0;
+  wolfEncounter.enemyId = 0;
+  cameraEventOffset.x = 0;
+  cameraEventOffset.y = 0;
+}
+
+function getCameraDrawPad(): number {
+  const dx = cameraShakeOffset.x + cameraEventOffset.x;
+  const dy = cameraShakeOffset.y + cameraEventOffset.y;
+  return CAMERA_SHAKE_DRAW_PAD + Math.ceil(Math.max(Math.abs(dx), Math.abs(dy)));
+}
+
 function render(): void {
+  ctx.clearRect(0, 0, session.w, session.h);
+  const gameplayScene = scene === "playing" || scene === "paused";
+  const cameraOffsetX = gameplayScene ? cameraShakeOffset.x + cameraEventOffset.x : 0;
+  const cameraOffsetY = gameplayScene ? cameraShakeOffset.y + cameraEventOffset.y : 0;
+  const cameraOffsetActive = gameplayScene && (cameraOffsetX !== 0 || cameraOffsetY !== 0);
+  if (cameraOffsetActive) {
+    ctx.save();
+    ctx.translate(cameraOffsetX, cameraOffsetY);
+  }
+
   drawTiledBackground();
 
   for (const entity of world.all) {
@@ -2389,6 +2868,15 @@ function render(): void {
   }
 
   drawFxOverlay();
+  if (scene !== "menu") {
+    drawStratumVignette();
+  }
+  if (scene === "playing" || scene === "paused") {
+    drawStratumBannerText();
+  }
+  if (cameraOffsetActive) {
+    ctx.restore();
+  }
 
   if (toastTimer > 0 && toastText.length > 0) {
     ctx.fillStyle = BLACK;
@@ -2405,30 +2893,47 @@ function drawTiledBackground(): void {
     return;
   }
 
-  const backgroundColor = getBackgroundColorByScore(currentScore);
-  if (!(bgTileImage.complete && bgTileImage.naturalWidth > 0 && bgTileImage.naturalHeight > 0)) {
-    ctx.fillStyle = backgroundColor;
-    ctx.fillRect(0, 0, session.w, session.h);
-    return;
+  const baseCfg = getStratumConfig(activeStratumLevel);
+  drawGameplayStratumLayer(baseCfg, 1);
+
+  if (stratumTransition.active) {
+    const nextCfg = getStratumConfig(stratumTransition.to);
+    const fadeAlpha = clamp(easeOutCubic(stratumTransition.progress), 0, 1);
+    drawGameplayStratumLayer(nextCfg, fadeAlpha);
   }
+}
 
-  ctx.fillStyle = backgroundColor;
-  ctx.fillRect(0, 0, session.w, session.h);
-
-  const tileW = BG_TILE_SIZE;
-  const tileH = BG_TILE_SIZE;
-  const ox = ((-sys.game.dist.x % tileW) + tileW) % tileW;
-  const oy = ((-sys.game.dist.y % tileH) + tileH) % tileH;
-
-  const prevSmooth = ctx.imageSmoothingEnabled;
+function drawGameplayStratumLayer(stratum: StratumConfig, alpha: number): void {
   const prevAlpha = ctx.globalAlpha;
-  ctx.imageSmoothingEnabled = false;
-  ctx.globalAlpha = BG_TILE_ALPHA;
-  for (let x = ox - tileW; x < session.w + tileW; x += tileW) {
-    for (let y = oy - tileH; y < session.h + tileH; y += tileH) {
-      ctx.drawImage(bgTileImage, Math.floor(x), Math.floor(y), tileW, tileH);
+  const prevSmooth = ctx.imageSmoothingEnabled;
+  const drawPad = getCameraDrawPad();
+  const gradient = ctx.createLinearGradient(0, 0, 0, session.h);
+  gradient.addColorStop(0, stratum.colorTop);
+  gradient.addColorStop(1, stratum.colorBottom);
+
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = gradient;
+  ctx.fillRect(
+    -drawPad,
+    -drawPad,
+    session.w + drawPad * 2,
+    session.h + drawPad * 2
+  );
+
+  const texture = gameplayTextureImages[stratum.texture];
+  if (texture.complete && texture.naturalWidth > 0 && texture.naturalHeight > 0) {
+    const tileW = BG_TILE_SIZE;
+    const tileH = BG_TILE_SIZE;
+    const ox = ((-sys.game.dist.x % tileW) + tileW) % tileW;
+    const oy = ((-sys.game.dist.y % tileH) + tileH) % tileH;
+    ctx.globalAlpha = alpha * stratum.textureAlpha;
+    for (let x = ox - tileW - drawPad; x < session.w + tileW + drawPad; x += tileW) {
+      for (let y = oy - tileH - drawPad; y < session.h + tileH + drawPad; y += tileH) {
+        ctx.drawImage(texture, Math.floor(x), Math.floor(y), tileW, tileH);
+      }
     }
   }
+
   ctx.globalAlpha = prevAlpha;
   ctx.imageSmoothingEnabled = prevSmooth;
 }
@@ -2454,6 +2959,28 @@ function drawIntroBackground(): void {
   }
 
   const cloudsAlpha = thirdProgress;
+  if (cloudsAlpha > 0 && oreSpriteSheet.complete && oreSpriteSheet.naturalWidth > 0) {
+    ctx.imageSmoothingEnabled = false;
+    for (const ore of introOreSprites) {
+      const drawW = ore.frame.w * ore.scale;
+      const drawH = ore.frame.h * ore.scale;
+      const dx = ore.xRatio * session.w - drawW * 0.5;
+      const dy = ore.yRatio * session.h - drawH * 0.5;
+      ctx.globalAlpha = 0.88 * cloudsAlpha;
+      ctx.drawImage(
+        oreSpriteSheet,
+        ore.frame.x,
+        ore.frame.y,
+        ore.frame.w,
+        ore.frame.h,
+        Math.floor(dx),
+        Math.floor(dy),
+        Math.floor(drawW),
+        Math.floor(drawH)
+      );
+    }
+  }
+
   if (cloudsAlpha > 0) {
     const time = introMenuElapsed;
     for (const cloud of introClouds) {
@@ -2499,37 +3026,88 @@ function drawCoverImage(image: HTMLImageElement, alpha = 1): void {
   ctx.globalAlpha = prevAlpha;
 }
 
-function getBackgroundColorByScore(score: number): string {
-  if (score >= 3000) {
-    return BACKGROUND_COLORS.s3000;
+function drawStratumVignette(): void {
+  const drawPad = getCameraDrawPad();
+  const currentCfg = getStratumConfig(activeStratumLevel);
+  let vignetteAlpha = currentCfg.vignetteAlpha;
+  if (stratumTransition.active) {
+    const nextCfg = getStratumConfig(stratumTransition.to);
+    const eased = easeOutCubic(stratumTransition.progress);
+    vignetteAlpha = currentCfg.vignetteAlpha * (1 - eased) + nextCfg.vignetteAlpha * eased;
   }
-  if (score >= 2000) {
-    return BACKGROUND_COLORS.s2000;
+
+  const innerRadius = Math.min(session.w, session.h) * 0.3;
+  const outerRadius = Math.max(session.w, session.h) * 0.8;
+  const gradient = ctx.createRadialGradient(session.x, session.y, innerRadius, session.x, session.y, outerRadius);
+  gradient.addColorStop(0, "rgba(0,0,0,0)");
+  gradient.addColorStop(0.62, "rgba(0,0,0,0)");
+  gradient.addColorStop(1, `rgba(0,0,0,${vignetteAlpha})`);
+
+  const prevAlpha = ctx.globalAlpha;
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = gradient;
+  ctx.fillRect(
+    -drawPad,
+    -drawPad,
+    session.w + drawPad * 2,
+    session.h + drawPad * 2
+  );
+  ctx.globalAlpha = prevAlpha;
+}
+
+function drawStratumBannerText(): void {
+  if (stratumBanner.timer <= 0) {
+    return;
   }
-  if (score >= 1000) {
-    return BACKGROUND_COLORS.s1000;
+
+  const remaining = stratumBanner.timer / stratumBanner.duration;
+  const elapsed = 1 - remaining;
+  const alpha = clamp(Math.min(elapsed / 0.22, remaining / 0.25), 0, 1);
+  if (alpha <= 0) {
+    return;
   }
-  return BACKGROUND_COLORS.s0;
+
+  const y = clamp(session.h * 0.24, 94, 200);
+  const prevAlpha = ctx.globalAlpha;
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = WHITE;
+  ctx.font = `${Math.round(clamp(session.w * 0.03, 26, 44))}px \"BitPotion\", sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(stratumBanner.text, session.x, y);
+  ctx.globalAlpha = prevAlpha;
+}
+
+function easeOutCubic(t: number): number {
+  const x = clamp(t, 0, 1);
+  return 1 - Math.pow(1 - x, 3);
 }
 
 function drawEntity(entity: Entity): void {
-  if (entity.type === "enemy" && enemySpriteSheet.complete && enemySpriteSheet.naturalWidth > 0) {
-    const frame = getEnemyFrameRect(entity.variant);
-    const prevSmooth = ctx.imageSmoothingEnabled;
-    ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(
-      enemySpriteSheet,
-      frame.x,
-      frame.y,
-      frame.w,
-      frame.h,
-      Math.floor(entity.x),
-      Math.floor(entity.y),
-      entity.w,
-      entity.h
-    );
-    ctx.imageSmoothingEnabled = prevSmooth;
+  if (!isWolfEncounterVisible(entity)) {
     return;
+  }
+
+  if (entity.type === "enemy") {
+    const spriteSheet = entity.variant === "wolf" ? wolfSpriteSheet : enemySpriteSheet;
+    if (spriteSheet.complete && spriteSheet.naturalWidth > 0) {
+      const frame = getEnemyFrameRect(entity.variant);
+      const prevSmooth = ctx.imageSmoothingEnabled;
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(
+        spriteSheet,
+        frame.x,
+        frame.y,
+        frame.w,
+        frame.h,
+        Math.floor(entity.x),
+        Math.floor(entity.y),
+        entity.w,
+        entity.h
+      );
+      ctx.imageSmoothingEnabled = prevSmooth;
+      return;
+    }
   }
   if (entity.type === "rock" && rocksSpriteSheet.complete && rocksSpriteSheet.naturalWidth > 0) {
     const frame = getRockFrameRect(entity.variant);
