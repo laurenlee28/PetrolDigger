@@ -216,6 +216,14 @@ interface FxBoostTrail {
   ttl: number;
 }
 
+interface FxExplosion {
+  x: number;
+  y: number;
+  scale: number;
+  age: number;
+  ttl: number;
+}
+
 interface EnemyFrameRect {
   x: number;
   y: number;
@@ -317,6 +325,14 @@ const FIRE_FRAMES: ReadonlyArray<EnemyFrameRect> = [
   { x: 465, y: 9, w: 26, h: 50 },
   { x: 530, y: 9, w: 25, h: 50 },
 ];
+const EXPLOSION_FRAMES: ReadonlyArray<EnemyFrameRect> = [
+  { x: 245, y: 262, w: 40, h: 36 },
+  { x: 288, y: 259, w: 47, h: 42 },
+  { x: 336, y: 258, w: 47, h: 42 },
+  { x: 383, y: 258, w: 47, h: 42 },
+  { x: 430, y: 258, w: 47, h: 42 },
+  { x: 477, y: 258, w: 47, h: 42 },
+];
 const INTRO_ORE_FRAMES: ReadonlyArray<EnemyFrameRect> = [
   { x: 66, y: 3, w: 29, h: 28 },
   { x: 98, y: 3, w: 29, h: 28 },
@@ -414,6 +430,16 @@ const FX_PICKUP_BURST = 6;
 const FX_HIT_BURST = 8;
 const FX_TRAIL_TTL = 0.5;
 const FX_PARTICLE_MAX = 180;
+const FX_EXPLOSION_MAX = 64;
+const EXPLOSION_FRAME_FPS = 18;
+const EXPLOSION_BASE_FRAME_W = 47;
+const EXPLOSION_BASE_FRAME_H = 42;
+const BOOST_BREAK_SIZE_MIN = 60;
+const BOOST_BREAK_SIZE_MAX = 220;
+const BOOST_BREAK_SHAKE_MIN_STRENGTH = 8;
+const BOOST_BREAK_SHAKE_MAX_STRENGTH = 26;
+const BOOST_BREAK_SHAKE_MIN_DURATION = 0.09;
+const BOOST_BREAK_SHAKE_MAX_DURATION = 0.22;
 const WIN_TARGET_SCORE = 5000;
 const SCORE_SCALE = 3.75;
 
@@ -665,6 +691,7 @@ const world = {
 const fx = {
   particles: [] as FxParticle[],
   boostTrail: [] as FxBoostTrail[],
+  explosions: [] as FxExplosion[],
 };
 
 let entityId = 0;
@@ -1001,6 +1028,7 @@ function resetRunState(): void {
   world.all.length = 0;
   fx.particles.length = 0;
   fx.boostTrail.length = 0;
+  fx.explosions.length = 0;
 }
 
 function startNewRun(): void {
@@ -2387,6 +2415,30 @@ function onPlayerObstacleHit(): void {
   triggerCameraShake(CAMERA_HIT_SHAKE_STRENGTH, CAMERA_HIT_SHAKE_DURATION);
 }
 
+function removeEntityForBoostCrash(entity: Entity): void {
+  entity.sleep = true;
+  if (entity.type !== "enemy") {
+    return;
+  }
+  enemyRuntime.delete(entity.id);
+  const fire = fireByEnemyId.get(entity.id);
+  if (fire) {
+    fire.sleep = true;
+    fireByEnemyId.delete(entity.id);
+  }
+}
+
+function getBoostBreakImpactRatio(entity: Entity): number {
+  const size = Math.max(entity.w, entity.h);
+  return clamp((size - BOOST_BREAK_SIZE_MIN) / (BOOST_BREAK_SIZE_MAX - BOOST_BREAK_SIZE_MIN), 0, 1);
+}
+
+function getExplosionScaleForEntity(entity: Entity): number {
+  const sx = entity.w / EXPLOSION_BASE_FRAME_W;
+  const sy = entity.h / EXPLOSION_BASE_FRAME_H;
+  return clamp(Math.max(sx, sy) * 1.05, 0.9, 4.2);
+}
+
 function updateCollisions(): void {
   if (scene !== "playing") {
     return;
@@ -2421,6 +2473,21 @@ function updateCollisions(): void {
           spawnPickupFx(entity.x, entity.y, "boost");
         }
         entity.sleep = true;
+        continue;
+      }
+
+      if (isBoostActive() && (entity.group === "top" || entity.group === "btm") && entity.collectible === "none") {
+        const impact = getBoostBreakImpactRatio(entity);
+        const shakeStrength =
+          BOOST_BREAK_SHAKE_MIN_STRENGTH +
+          (BOOST_BREAK_SHAKE_MAX_STRENGTH - BOOST_BREAK_SHAKE_MIN_STRENGTH) * impact;
+        const shakeDuration =
+          BOOST_BREAK_SHAKE_MIN_DURATION +
+          (BOOST_BREAK_SHAKE_MAX_DURATION - BOOST_BREAK_SHAKE_MIN_DURATION) * impact;
+        const explosionScale = getExplosionScaleForEntity(entity);
+        removeEntityForBoostCrash(entity);
+        triggerCameraShake(shakeStrength, shakeDuration);
+        spawnExplosionFx(entity.x + entity.w * 0.5, entity.y + entity.h * 0.5, explosionScale);
         continue;
       }
 
@@ -2600,6 +2667,20 @@ function spawnHitFx(x: number, y: number): void {
   }
 }
 
+function spawnExplosionFx(x: number, y: number, scale = 1): void {
+  const ttl = EXPLOSION_FRAMES.length / EXPLOSION_FRAME_FPS;
+  fx.explosions.push({
+    x,
+    y,
+    scale: clamp(scale, 0.75, 5),
+    age: 0,
+    ttl,
+  });
+  if (fx.explosions.length > FX_EXPLOSION_MAX) {
+    fx.explosions.splice(0, fx.explosions.length - FX_EXPLOSION_MAX);
+  }
+}
+
 function updateFxSystem(dt: number, worldShift: { x: number; y: number }): void {
   const liveTrail: FxBoostTrail[] = [];
   for (const trail of fx.boostTrail) {
@@ -2626,6 +2707,17 @@ function updateFxSystem(dt: number, worldShift: { x: number; y: number }): void 
     }
   }
   fx.particles = liveParticles;
+
+  const liveExplosions: FxExplosion[] = [];
+  for (const explosion of fx.explosions) {
+    explosion.x -= worldShift.x;
+    explosion.y -= worldShift.y;
+    explosion.age += dt;
+    if (explosion.age < explosion.ttl) {
+      liveExplosions.push(explosion);
+    }
+  }
+  fx.explosions = liveExplosions;
 }
 
 function triggerCameraShake(strength: number, duration: number): void {
@@ -2847,6 +2939,7 @@ function render(): void {
   if (scene !== "menu") {
     drawPlayerSprite();
   }
+  drawExplosionFx();
 
   drawFxOverlay();
   if (scene !== "menu") {
@@ -2947,7 +3040,7 @@ function drawIntroBackground(): void {
       const drawH = ore.frame.h * ore.scale;
       const dx = ore.xRatio * session.w - drawW * 0.5;
       const dy = ore.yRatio * session.h - drawH * 0.5;
-      ctx.globalAlpha = 0.88 * cloudsAlpha;
+      ctx.globalAlpha = 0.6 * cloudsAlpha;
       ctx.drawImage(
         oreSpriteSheet,
         ore.frame.x,
@@ -3272,8 +3365,42 @@ function drawBoostTrailFx(): void {
   ctx.globalAlpha = 1;
 }
 
+function drawExplosionFx(): void {
+  if (fx.explosions.length === 0) {
+    return;
+  }
+  if (!(playerSpriteSheet.complete && playerSpriteSheet.naturalWidth > 0)) {
+    return;
+  }
+
+  const prevSmooth = ctx.imageSmoothingEnabled;
+  ctx.imageSmoothingEnabled = false;
+  for (const explosion of fx.explosions) {
+    const frameIndex = Math.floor(explosion.age * EXPLOSION_FRAME_FPS);
+    const frame = EXPLOSION_FRAMES[frameIndex] ?? EXPLOSION_FRAMES[EXPLOSION_FRAMES.length - 1];
+    if (!frame) {
+      continue;
+    }
+    const drawW = frame.w * explosion.scale;
+    const drawH = frame.h * explosion.scale;
+    const dx = explosion.x - drawW * 0.5;
+    const dy = explosion.y - drawH * 0.5;
+    ctx.drawImage(
+      playerSpriteSheet,
+      frame.x,
+      frame.y,
+      frame.w,
+      frame.h,
+      Math.floor(dx),
+      Math.floor(dy),
+      Math.floor(drawW),
+      Math.floor(drawH)
+    );
+  }
+  ctx.imageSmoothingEnabled = prevSmooth;
+}
+
 function drawFxOverlay(): void {
-  
   for (const particle of fx.particles) {
     const alpha = 1 - particle.age / particle.ttl;
     if (alpha <= 0) {
