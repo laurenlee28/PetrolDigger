@@ -56,6 +56,10 @@ body {
   opacity: 0;
 }
 
+.game-root.menu-ui .hud {
+  opacity: 0;
+}
+
 .hud span {
   border: 2px solid #000;
   background: #fff;
@@ -95,7 +99,7 @@ body {
   justify-content: center;
   align-items: center;
   text-align: center;
-  gap: 16px;
+  gap: 0;
   padding: 72px 24px 24px;
   z-index: 8;
 }
@@ -105,11 +109,14 @@ body {
 }
 
 .overlay-title {
-  font-family: sans-serif;
-  font-size: clamp(28px, 5vw, 46px);
-  font-weight: 700;
-  text-transform: lowercase;
-  margin-top: 4px;
+  font-family: "Trebuchet MS", "Arial Black", sans-serif;
+  font-size: clamp(42px, 8vw, 88px);
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: none;
+  line-height: 1.08;
+  margin: 0 0 36px;
+  text-shadow: 4px 4px 0 #fff;
 }
 
 .overlay-button {
@@ -120,8 +127,9 @@ body {
   font-family: sans-serif;
   font-size: clamp(14px, 2vw, 22px);
   font-weight: 700;
-  text-transform: lowercase;
+  text-transform: none;
   padding: 10px 18px;
+  min-width: 220px;
   cursor: pointer;
 }
 
@@ -130,10 +138,36 @@ body {
   color: #fff;
 }
 
+.game-root.menu-ui .overlay-button {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  min-width: 0;
+}
+
+.game-root.menu-ui .overlay-button:hover {
+  background: transparent;
+  color: #000;
+  text-decoration: underline;
+}
+
+.overlay-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.overlay-actions.hidden {
+  display: none;
+}
+
 .overlay-message {
-  min-height: 24px;
+  margin-top: 20px;
+  min-height: 56px;
   font-size: clamp(14px, 1.8vw, 20px);
   font-weight: 600;
+  white-space: pre-line;
 }
 
 @media (max-width: 640px) {
@@ -144,11 +178,26 @@ body {
   }
 
   .overlay {
-    gap: 12px;
+    padding-top: 56px;
+  }
+
+  .overlay-title {
+    margin-bottom: 28px;
+  }
+
+  .overlay-actions {
+    margin-top: 12px;
+    gap: 10px;
   }
 
   .overlay-button {
     width: 100%;
-    max-width: 320px;
+    max-width: 300px;
+    min-width: 0;
+  }
+
+  .overlay-message {
+    margin-top: 16px;
+    min-height: 72px;
   }
 }

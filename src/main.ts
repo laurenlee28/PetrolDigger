@@ -1,5 +1,5 @@
 ﻿import "./style.css";
-import playerSpriteSheetUrl from "./assets/player.png";
+import playerSpriteSheetUrl from "./assets/drill.png";
 import bgTileUrl from "./assets/bg_1.png";
 import enemySpriteSheetUrl from "./assets/enemy.png";
 import rocksSpriteSheetUrl from "./assets/rocks.png";
@@ -8,7 +8,7 @@ import graveSpriteSheetUrl from "./assets/grave.png";
 import terrainSpriteSheetUrl from "./assets/terrain.png";
 import fireSpriteSheetUrl from "./assets/fire.png";
 
-type SceneState = "menu" | "playing" | "paused" | "gameover";
+type SceneState = "menu" | "playing" | "paused" | "gameover" | "win";
 type Group = "top" | "btm" | "npc" | "enemy";
 type CollectibleType = "none" | "life" | "boost";
 type SpawnType =
@@ -228,20 +228,12 @@ interface EnemyFrameRect {
 
 const CANVAS_WIDTH = 1280;
 const CANVAS_HEIGHT = 720;
-const PLAYER_FRAME_WIDTH = 35;
+const PLAYER_FRAME_WIDTH = 48;
 const PLAYER_FRAME_HEIGHT = 47;
 const PLAYER_WALK_FPS = 8;
 const BOOST_ANIMATION_FPS = 10;
 const PLAYER_FRAMES: ReadonlyArray<{ x: number; y: number; w: number; h: number }> = [
-  { x: 17, y: 655, w: 35, h: 47 },
-  { x: 81, y: 655, w: 35, h: 47 },
-  { x: 145, y: 655, w: 34, h: 48 },
-  { x: 209, y: 655, w: 36, h: 47 },
-  { x: 273, y: 655, w: 36, h: 48 },
-  { x: 337, y: 655, w: 36, h: 47 },
-  { x: 401, y: 655, w: 34, h: 48 },
-  { x: 465, y: 655, w: 33, h: 47 },
-  { x: 529, y: 655, w: 34, h: 48 },
+  { x: 421, y: 197, w: 48, h: 47 },
 ];
 const ENEMY_FRAMES: Record<EnemyFrameKey, EnemyFrameRect> = {
   enemy1: { x: 181, y: 9, w: 45, h: 73 },
@@ -300,10 +292,10 @@ const FIRE_FRAMES: ReadonlyArray<EnemyFrameRect> = [
 const BG_TILE_SIZE = 512;
 const BG_TILE_ALPHA = 0.15;
 const BACKGROUND_COLORS = {
-  s0: "#F1C27B",
-  s1000: "#FFD89C",
-  s2000: "#A2CDB0",
-  s3000: "#85A389",
+  s0: "#f1a432",
+  s1000: "#fce4c0",
+  s2000: "#7fcf9a",
+  s3000: "#67826b",
 } as const;
 const WHITE = "#ffffff";
 const BLACK = "#000000";
@@ -337,6 +329,8 @@ const FX_PICKUP_BURST = 6;
 const FX_HIT_BURST = 8;
 const FX_TRAIL_TTL = 0.5;
 const FX_PARTICLE_MAX = 180;
+const WIN_TARGET_SCORE = 4000;
+const SCORE_SCALE = 3.75;
 
 const ENTITY_SHEET_META: Record<SpawnType, EntitySheetMeta> = {
   npc: { w: 64, h: 64, str: "crash", group: "npc", hazard: false, collectible: "none", solid: false },
@@ -411,10 +405,25 @@ const overlayPrompt = document.createElement("button");
 overlayPrompt.className = "overlay-button";
 overlayPrompt.type = "button";
 
+const overlayActions = document.createElement("div");
+overlayActions.className = "overlay-actions";
+
+const overlayHowToPlay = document.createElement("button");
+overlayHowToPlay.className = "overlay-button";
+overlayHowToPlay.type = "button";
+overlayHowToPlay.textContent = "How to Play";
+
+const overlayScoreBoard = document.createElement("button");
+overlayScoreBoard.className = "overlay-button";
+overlayScoreBoard.type = "button";
+overlayScoreBoard.textContent = "Score Board";
+
+overlayActions.append(overlayHowToPlay, overlayScoreBoard);
+
 const overlayMessage = document.createElement("div");
 overlayMessage.className = "overlay-message";
 
-overlay.append(overlayTitle, overlayPrompt, overlayMessage);
+overlay.append(overlayTitle, overlayPrompt, overlayActions, overlayMessage);
 stage.append(canvas, overlay);
 root.append(hud, stage);
 app.replaceChildren(root);
@@ -633,7 +642,7 @@ function updateScene(dt: number): void {
     return;
   }
 
-  if (scene === "gameover") {
+  if (scene === "gameover" || scene === "win") {
     toastTimer = Math.max(0, toastTimer - dt);
     if (pendingRestart) {
       pendingRestart = false;
@@ -686,9 +695,14 @@ function updateScene(dt: number): void {
   putToSleep();
   mergeAll();
 
-  currentScore = Math.floor(sys.game.dist.unit);
+  currentScore = Math.floor(sys.game.dist.unit * SCORE_SCALE);
   toastTimer = Math.max(0, toastTimer - dt);
   updateHUD();
+
+  if (!sys.game.finish && currentScore >= WIN_TARGET_SCORE) {
+    finishRun("win");
+    return;
+  }
 
   if (!sys.game.finish && sys.game.lives.current <= 0) {
     finishRun("obstacle");
@@ -744,7 +758,7 @@ function resizeViewport(): void {
 
   updateGridAndSpawnBase();
 
-  if (scene === "menu" || scene === "gameover") {
+  if (scene === "menu" || scene === "gameover" || scene === "win") {
     player.pos.x = session.x;
     player.pos.y = session.y;
   } else if (prevW > 0 && prevH > 0) {
@@ -829,14 +843,19 @@ function startNewRun(): void {
   setScene("playing");
 }
 
-function finishRun(reason: "obstacle" | "enemy"): void {
+function finishRun(reason: "obstacle" | "enemy" | "win"): void {
   if (sys.game.finish) {
     return;
   }
 
   sys.game.finish = true;
   sys.game.caught = reason === "enemy";
-  gameOverReason = reason === "enemy" ? "enemy caught you" : "obstacle limit reached";
+  gameOverReason =
+    reason === "win"
+      ? "you have reached the target zone"
+      : reason === "enemy"
+      ? "enemy caught you"
+      : "obstacle limit reached";
 
   if (currentScore > stats.highScore) {
     stats.highScore = currentScore;
@@ -846,7 +865,7 @@ function finishRun(reason: "obstacle" | "enemy"): void {
     saveStats(stats);
   }
 
-  setScene("gameover");
+  setScene(reason === "win" ? "win" : "gameover");
 }
 
 function setScene(next: SceneState): void {
@@ -858,19 +877,23 @@ function setScene(next: SceneState): void {
 
 function syncOverlay(): void {
   if (scene === "menu") {
+    root.classList.add("menu-ui");
     root.classList.remove("gameover-ui");
     stage.classList.remove("gameover-blur");
     overlay.classList.remove("hidden");
-    overlayTitle.textContent = "geosteering quest";
-    overlayPrompt.textContent = "press space to game start";
+    overlayActions.classList.remove("hidden");
+    overlayTitle.textContent = "Geosteering Quest";
+    overlayPrompt.textContent = "Game Start";
     overlayMessage.textContent = "";
     return;
   }
 
   if (scene === "paused") {
+    root.classList.remove("menu-ui");
     root.classList.remove("gameover-ui");
     stage.classList.remove("gameover-blur");
     overlay.classList.remove("hidden");
+    overlayActions.classList.add("hidden");
     overlayTitle.textContent = "paused";
     overlayPrompt.textContent = "press space to resume";
     overlayMessage.textContent = `score ${currentScore}`;
@@ -878,9 +901,11 @@ function syncOverlay(): void {
   }
 
   if (scene === "gameover") {
+    root.classList.remove("menu-ui");
     root.classList.add("gameover-ui");
     stage.classList.add("gameover-blur");
     overlay.classList.remove("hidden");
+    overlayActions.classList.add("hidden");
     overlayTitle.textContent = "game over";
     overlayPrompt.textContent = "press space to return menu";
     const recordText = sys.game.highScore ? " | new high score!" : "";
@@ -888,6 +913,20 @@ function syncOverlay(): void {
     return;
   }
 
+  if (scene === "win") {
+    root.classList.remove("menu-ui");
+    root.classList.add("gameover-ui");
+    stage.classList.add("gameover-blur");
+    overlay.classList.remove("hidden");
+    overlayActions.classList.add("hidden");
+    overlayTitle.textContent = "win";
+    overlayPrompt.textContent = "press space to return menu";
+    const recordText = sys.game.highScore ? " | new high score!" : "";
+    overlayMessage.textContent = `${gameOverReason} | score ${currentScore}${recordText}`;
+    return;
+  }
+
+  root.classList.remove("menu-ui");
   root.classList.remove("gameover-ui");
   stage.classList.remove("gameover-blur");
   overlay.classList.add("hidden");
@@ -896,7 +935,7 @@ function syncOverlay(): void {
 function updateHUD(): void {
   hpText.textContent = `HP ${sys.game.lives.current}/${sys.game.lives.max}`;
   if (scene === "playing" || scene === "paused") {
-    highScoreText.textContent = `점수 ${currentScore}`;
+    highScoreText.textContent = `★ ${currentScore}`;
   } else {
     highScoreText.textContent = `최고기록 ${stats.highScore}`;
   }
@@ -911,7 +950,9 @@ function wireButtons(): void {
   overlayPrompt.addEventListener("click", () => {
     if (scene === "menu") {
       pendingStart = true;
-    } else if (scene === "gameover") {
+    } else if (scene === "paused") {
+      pendingPauseToggle = true;
+    } else if (scene === "gameover" || scene === "win") {
       pendingRestart = true;
     }
   });
@@ -934,13 +975,13 @@ function wireInput(): void {
         pendingStart = true;
       } else if (scene === "playing" || scene === "paused") {
         pendingPauseToggle = true;
-      } else if (scene === "gameover") {
+      } else if (scene === "gameover" || scene === "win") {
         pendingRestart = true;
       }
       return;
     }
 
-    if ((code === "KeyP" || code === "Escape") && scene !== "menu" && scene !== "gameover") {
+    if ((code === "KeyP" || code === "Escape") && scene !== "menu" && scene !== "gameover" && scene !== "win") {
       pendingPauseToggle = true;
     }
 
@@ -2277,7 +2318,7 @@ function render(): void {
 }
 
 function drawTiledBackground(): void {
-  const backgroundColor = getBackgroundColorByScore(Math.floor(sys.game.dist.unit));
+  const backgroundColor = getBackgroundColorByScore(currentScore);
   if (!(bgTileImage.complete && bgTileImage.naturalWidth > 0 && bgTileImage.naturalHeight > 0)) {
     ctx.fillStyle = backgroundColor;
     ctx.fillRect(0, 0, session.w, session.h);
