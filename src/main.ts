@@ -1138,10 +1138,7 @@ function updateStratumState(dt: number): void {
   const target = getStratumLevelByScore(currentScore);
   if (target > activeStratumLevel) {
     const nextLevel = Math.min(4, activeStratumLevel + 1);
-    // Wait until previous stratum entities leave the screen.
-    if (!hasVisibleEntitiesForStratum(activeStratumLevel)) {
-      startStratumTransition(nextLevel);
-    }
+    startStratumTransition(nextLevel);
   }
 }
 
@@ -1178,22 +1175,6 @@ function getStratumLevelByScore(score: number): number {
 function getStratumConfig(level: number): StratumConfig {
   const clamped = clamp(level, 1, STRATUM_CONFIGS.length);
   return STRATUM_CONFIGS[clamped - 1] ?? STRATUM_CONFIGS[0];
-}
-
-function hasVisibleEntitiesForStratum(level: number): boolean {
-  const groups = [world.top, world.btm, world.npc, world.enemy];
-  for (const group of groups) {
-    for (const entity of group) {
-      if (entity.sleep || entity.stratumLevel !== level) {
-        continue;
-      }
-      if (entity.y + entity.h < -32 || entity.y > session.h + 32) {
-        continue;
-      }
-      return true;
-    }
-  }
-  return false;
 }
 
 function wireButtons(): void {
