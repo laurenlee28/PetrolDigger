@@ -365,7 +365,7 @@ const STRATUM_CONFIGS: ReadonlyArray<StratumConfig> = [
     colorBottom: "#c3742e",
     texture: "mine",
     textureAlpha: 0.14,
-    vignetteAlpha: 0.16,
+    vignetteAlpha: 0.2,
   },
   {
     level: 2,
@@ -375,7 +375,7 @@ const STRATUM_CONFIGS: ReadonlyArray<StratumConfig> = [
     colorBottom: "#8f5a32",
     texture: "mine",
     textureAlpha: 0.17,
-    vignetteAlpha: 0.24,
+    vignetteAlpha: 0.5,
   },
   {
     level: 3,
@@ -385,7 +385,7 @@ const STRATUM_CONFIGS: ReadonlyArray<StratumConfig> = [
     colorBottom: "#473f3b",
     texture: "rubble",
     textureAlpha: 0.2,
-    vignetteAlpha: 0.33,
+    vignetteAlpha: 0.7,
   },
   {
     level: 4,
@@ -395,7 +395,7 @@ const STRATUM_CONFIGS: ReadonlyArray<StratumConfig> = [
     colorBottom: "#241f24",
     texture: "rubble",
     textureAlpha: 0.24,
-    vignetteAlpha: 0.44,
+    vignetteAlpha: 0.8,
   },
 ];
 const WHITE = "#ffffff";
@@ -440,6 +440,7 @@ const BOOST_BREAK_SHAKE_MIN_STRENGTH = 8;
 const BOOST_BREAK_SHAKE_MAX_STRENGTH = 26;
 const BOOST_BREAK_SHAKE_MIN_DURATION = 0.09;
 const BOOST_BREAK_SHAKE_MAX_DURATION = 0.22;
+const VIGNETTE_INTENSITY_MULTIPLIER = 3;
 const WIN_TARGET_SCORE = 5000;
 const SCORE_SCALE = 3.75;
 
@@ -2943,6 +2944,9 @@ function render(): void {
 
   drawFxOverlay();
   if (scene !== "menu") {
+    drawStratumBrightnessOverlay();
+  }
+  if (scene !== "menu") {
     drawStratumVignette();
   }
   if (scene === "playing" || scene === "paused") {
@@ -3040,7 +3044,7 @@ function drawIntroBackground(): void {
       const drawH = ore.frame.h * ore.scale;
       const dx = ore.xRatio * session.w - drawW * 0.5;
       const dy = ore.yRatio * session.h - drawH * 0.5;
-      ctx.globalAlpha = 0.6 * cloudsAlpha;
+      ctx.globalAlpha = 0.7 * cloudsAlpha;
       ctx.drawImage(
         oreSpriteSheet,
         ore.frame.x,
@@ -3109,17 +3113,51 @@ function drawStratumVignette(): void {
     const eased = easeOutCubic(stratumTransition.progress);
     vignetteAlpha = currentCfg.vignetteAlpha * (1 - eased) + nextCfg.vignetteAlpha * eased;
   }
+  const scaledVignetteAlpha = Math.min(1, vignetteAlpha * VIGNETTE_INTENSITY_MULTIPLIER);
 
-  const innerRadius = Math.min(session.w, session.h) * 0.3;
-  const outerRadius = Math.max(session.w, session.h) * 0.8;
+  const innerRadius = Math.min(session.w, session.h) * 0.2;
+  const outerRadius = Math.max(session.w, session.h) * 0.62;
   const gradient = ctx.createRadialGradient(session.x, session.y, innerRadius, session.x, session.y, outerRadius);
   gradient.addColorStop(0, "rgba(0,0,0,0)");
-  gradient.addColorStop(0.62, "rgba(0,0,0,0)");
-  gradient.addColorStop(1, `rgba(0,0,0,${vignetteAlpha})`);
+  gradient.addColorStop(0.35, "rgba(0,0,0,0)");
+  gradient.addColorStop(0.72, `rgba(0,0,0,${scaledVignetteAlpha * 0.55})`);
+  gradient.addColorStop(1, `rgba(0,0,0,${scaledVignetteAlpha})`);
 
   const prevAlpha = ctx.globalAlpha;
   ctx.globalAlpha = 1;
   ctx.fillStyle = gradient;
+  ctx.fillRect(
+    -drawPad,
+    -drawPad,
+    session.w + drawPad * 2,
+    session.h + drawPad * 2
+  );
+  ctx.globalAlpha = prevAlpha;
+}
+
+function getStratumBrightness(level: number): number {
+  const clampedLevel = clamp(level, 1, 4);
+  return Math.pow(0.8, clampedLevel - 1);
+}
+
+function drawStratumBrightnessOverlay(): void {
+  let brightness = getStratumBrightness(activeStratumLevel);
+  if (stratumTransition.active) {
+    const eased = easeOutCubic(stratumTransition.progress);
+    const fromBrightness = getStratumBrightness(stratumTransition.from);
+    const toBrightness = getStratumBrightness(stratumTransition.to);
+    brightness = fromBrightness * (1 - eased) + toBrightness * eased;
+  }
+
+  const darkenAlpha = clamp(1 - brightness, 0, 0.95);
+  if (darkenAlpha <= 0) {
+    return;
+  }
+
+  const drawPad = getCameraDrawPad();
+  const prevAlpha = ctx.globalAlpha;
+  ctx.globalAlpha = darkenAlpha;
+  ctx.fillStyle = BLACK;
   ctx.fillRect(
     -drawPad,
     -drawPad,
