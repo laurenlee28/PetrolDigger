@@ -319,6 +319,8 @@ const CAMERA_HIT_SHAKE_DURATION = 0.2;
 const CAMERA_HIT_SHAKE_STRENGTH = 20;
 const CAMERA_SHAKE_DRAW_PAD = 48;
 const BOSS_SPAWN_SCORE = 1700;
+const GOAL_STRATUM_RESET_SCORE = 4000;
+const GOAL_STRATUM_BANNER_TEXT = "you have reached the goal";
 const STRATUM_CONFIGS: ReadonlyArray<StratumConfig> = [
   {
     level: 1,
@@ -436,7 +438,7 @@ const AUDIO_LABEL_ON = "Audio: ON";
 const AUDIO_LABEL_OFF = "Audio: OFF";
 const EXPLOSION_SFX_POOL_SIZE = 4;
 const ITEM_SFX_POOL_SIZE = 4;
-const WIN_TARGET_SCORE = 5000;
+const WIN_TARGET_SCORE = 4500;
 const SCORE_SCALE = 3.75;
 const DIFFICULTY_CONFIGS: Record<GameDifficulty, DifficultyConfig> = {
   easy: { label: "Easy", speedMul: 0.9, spawnMul: 1.12 },
@@ -770,6 +772,7 @@ let cameraShakeDuration = 0;
 let cameraShakeStrength = 0;
 let hitStopTimer = 0;
 let bossSpawned = false;
+let goalStratumResetTriggered = false;
 const boostCrashRecoil = {
   direction: { x: 0, y: -1 } as Vec2,
   speed: 0,
@@ -789,6 +792,7 @@ const stratumTransition = {
   to: 1,
   progress: 1,
   duration: STRATUM_TRANSITION_DURATION,
+  bannerTextOverride: null as string | null,
 };
 const stratumBanner = {
   text: "Stratum 1",
@@ -937,7 +941,11 @@ function updateScene(dt: number): void {
   updateBoostState(dt, worldShift);
   syncBoostLoopAudio();
 
-  updateSpawnLoop(phase);
+  const shouldStopSpawns =
+    goalStratumResetTriggered || Math.floor(sys.game.dist.unit * SCORE_SCALE) >= GOAL_STRATUM_RESET_SCORE;
+  if (!shouldStopSpawns) {
+    updateSpawnLoop(phase);
+  }
   moveEntities(dt, effectiveWorldShift);
   updateCollisions();
   updateBoostCrashFlashFx(dt, effectiveWorldShift);
@@ -1070,6 +1078,7 @@ function resetRunState(): void {
   boostTrailTick = 0;
   lastDownTapTime = -10;
   bossSpawned = false;
+  goalStratumResetTriggered = false;
   currentScore = 0;
   gameOverReason = "";
   toastText = "";
@@ -1079,6 +1088,7 @@ function resetRunState(): void {
   stratumTransition.from = 1;
   stratumTransition.to = 1;
   stratumTransition.progress = 1;
+  stratumTransition.bannerTextOverride = null;
   hitStopTimer = 0;
   boostCrashRecoil.timeLeft = 0;
   boostCrashRecoil.speed = 0;
@@ -1864,8 +1874,19 @@ function updateStratumState(dt: number): void {
     if (stratumTransition.progress >= 1) {
       stratumTransition.active = false;
       activeStratumLevel = stratumTransition.to;
-      triggerStratumBanner(activeStratumLevel);
+      triggerStratumBanner(activeStratumLevel, stratumTransition.bannerTextOverride ?? undefined);
+      stratumTransition.bannerTextOverride = null;
     }
+    return;
+  }
+
+  if (!goalStratumResetTriggered && currentScore >= GOAL_STRATUM_RESET_SCORE) {
+    goalStratumResetTriggered = true;
+    startStratumTransition(1, GOAL_STRATUM_BANNER_TEXT);
+    return;
+  }
+
+  if (goalStratumResetTriggered) {
     return;
   }
 
@@ -1876,8 +1897,8 @@ function updateStratumState(dt: number): void {
   }
 }
 
-function startStratumTransition(nextLevel: number): void {
-  if (nextLevel <= activeStratumLevel) {
+function startStratumTransition(nextLevel: number, bannerTextOverride?: string): void {
+  if (!stratumTransition.active && nextLevel === activeStratumLevel) {
     return;
   }
   stratumTransition.active = true;
@@ -1885,11 +1906,12 @@ function startStratumTransition(nextLevel: number): void {
   stratumTransition.to = nextLevel;
   stratumTransition.progress = 0;
   stratumTransition.duration = STRATUM_TRANSITION_DURATION;
+  stratumTransition.bannerTextOverride = bannerTextOverride ?? null;
 }
 
-function triggerStratumBanner(level: number): void {
+function triggerStratumBanner(level: number, textOverride?: string): void {
   const cfg = getStratumConfig(level);
-  stratumBanner.text = cfg.label;
+  stratumBanner.text = textOverride ?? cfg.label;
   stratumBanner.timer = stratumBanner.duration;
 }
 
