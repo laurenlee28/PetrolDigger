@@ -2232,10 +2232,6 @@ function wireInput(): void {
         case "KeyS":
           changeDirectionLikeOriginal("down", true);
           break;
-        case "ArrowUp":
-        case "KeyW":
-          changeDirectionLikeOriginal("stop");
-          break;
       }
     }
 
@@ -2264,7 +2260,13 @@ function normalizeInput(): void {
   input.moveVec.x = 0;
   input.moveVec.y = 0;
   input.isBoost = false;
-  input.isBrake = pressedKeys.has("ControlLeft") || pressedKeys.has("ControlRight") || pressedKeys.has("KeyZ");
+  const upBrake = pressedKeys.has("ArrowUp") || pressedKeys.has("KeyW");
+  if (upBrake) {
+    playerDir = "down";
+    playerAngle = (-90 * Math.PI) / 180;
+  }
+  input.isBrake =
+    upBrake || pressedKeys.has("ControlLeft") || pressedKeys.has("ControlRight") || pressedKeys.has("KeyZ");
   updatePlayerPoseFromDirection();
 }
 
@@ -2442,14 +2444,10 @@ function getActiveSpeedMultiplier(): number {
 function updateWorldSpeed(dt: number, phase: PhaseConfig): void {
   const base = (BASE_WORLD_SPEED + sys.game.time.elapsed * 1.15) * getActiveSpeedMultiplier();
   const brakeMul = input.isBrake ? 0.74 : 1;
-  const stopMul = playerDir === "stop" ? 0 : 1;
   const boostMul = isBoostActive() ? BOOST_SPEED_MULTIPLIER : 1;
 
-  const target = base * phase.speedMul * brakeMul * boostMul * stopMul;
-  worldSpeed += (target - worldSpeed) * Math.min(1, dt * (playerDir === "stop" ? 3.4 : 2.6));
-  if (playerDir === "stop" && worldSpeed < 0.05) {
-    worldSpeed = 0;
-  }
+  const target = base * phase.speedMul * brakeMul * boostMul;
+  worldSpeed += (target - worldSpeed) * Math.min(1, dt * 2.6);
 }
 
 function updatePlayer(dt: number): void {
@@ -3928,29 +3926,40 @@ function drawPlayerSprite(): void {
   const sy = frame.y;
   const dx = player.pos.x - PLAYER_FRAME_WIDTH / 2;
   const dy = player.pos.y - PLAYER_FRAME_HEIGHT / 2;
+  const rotation = playerAngle + Math.PI / 2;
 
   if (playerSpriteSheet.complete && playerSpriteSheet.naturalWidth >= PLAYER_FRAME_WIDTH) {
     const prevAlpha = ctx.globalAlpha;
+    const prevSmooth = ctx.imageSmoothingEnabled;
     if (playerPose === "player_invincible") {
       ctx.globalAlpha = Math.floor(sys.game.time.elapsed * 10) % 2 === 0 ? 0.45 : 0.9;
     }
     ctx.imageSmoothingEnabled = false;
+    ctx.save();
+    ctx.translate(Math.floor(player.pos.x), Math.floor(player.pos.y));
+    ctx.rotate(rotation);
     ctx.drawImage(
       playerSpriteSheet,
       sx,
       sy,
       frame.w,
       frame.h,
-      Math.floor(dx),
-      Math.floor(dy),
+      Math.floor(-PLAYER_FRAME_WIDTH / 2),
+      Math.floor(-PLAYER_FRAME_HEIGHT / 2),
       PLAYER_FRAME_WIDTH,
       PLAYER_FRAME_HEIGHT
     );
+    ctx.restore();
     ctx.globalAlpha = prevAlpha;
+    ctx.imageSmoothingEnabled = prevSmooth;
     return;
   }
 
-  drawRectWithLabel(dx, dy, PLAYER_FRAME_WIDTH, PLAYER_FRAME_HEIGHT, playerPose);
+  ctx.save();
+  ctx.translate(Math.floor(player.pos.x), Math.floor(player.pos.y));
+  ctx.rotate(rotation);
+  drawRectWithLabel(dx - player.pos.x, dy - player.pos.y, PLAYER_FRAME_WIDTH, PLAYER_FRAME_HEIGHT, playerPose);
+  ctx.restore();
 }
 
 function getPlayerSpriteFrameIndex(): number {
