@@ -5,7 +5,6 @@ import gameplayBgRubbleUrl from "./assets/gameplay-bg-rubble.png";
 import bossSpriteSheetUrl from "./assets/boss.png";
 import rocksSpriteSheetUrl from "./assets/rocks.png";
 import objectsSpriteSheetUrl from "./assets/objects.png";
-import graveSpriteSheetUrl from "./assets/grave.png";
 import terrainSpriteSheetUrl from "./assets/terrain.png";
 import oreSpriteSheetUrl from "./assets/ore.png";
 import introBackground1Url from "./assets/intro-bg/background1.png";
@@ -28,17 +27,16 @@ import itemSfxUrl from "./assets/audio/item.mp3";
 import hurtSfxUrl from "./assets/audio/hurt.mp3";
 
 type SceneState = "menu" | "playing" | "paused" | "gameover" | "win";
-type Group = "top" | "btm" | "npc";
+type Group = "top" | "btm";
 type CollectibleType = "none" | "life" | "boost";
 type SpawnType =
-  | "npc"
   | "boss"
   | "rock"
   | "snag"
   | "ramp"
   | "boost"
   | "life"
-  | "lure";
+  | "ore";
 type EntityType = SpawnType | "player";
 type PhaseName = "easy" | "hard" | "recovery";
 type GameDifficulty = "easy" | "normal" | "hard";
@@ -149,7 +147,6 @@ interface PhaseConfig {
   name: PhaseName;
   speedMul: number;
   rowMul: number;
-  npcMul: number;
 }
 
 interface DifficultyConfig {
@@ -212,6 +209,19 @@ interface FxBoostCrashFlash {
   explosionScale: number;
 }
 
+interface FxOreDrop {
+  id: number;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  age: number;
+  delay: number;
+  ttl: number;
+  scale: number;
+  transitionTtl: number;
+}
+
 interface EnemyFrameRect {
   x: number;
   y: number;
@@ -264,6 +274,8 @@ const CANVAS_WIDTH = 1280;
 const CANVAS_HEIGHT = 720;
 const PLAYER_FRAME_WIDTH = 68;
 const PLAYER_FRAME_HEIGHT = 67;
+const PLAYER_HITBOX_WIDTH = 58;
+const PLAYER_HITBOX_HEIGHT = 57;
 const PLAYER_WALK_FPS = 8;
 const BOOST_ANIMATION_FPS = 10;
 const PLAYER_FRAMES: ReadonlyArray<{ x: number; y: number; w: number; h: number }> = [
@@ -273,6 +285,8 @@ const BOSS_FRAME: EnemyFrameRect = { x: 2926, y: 610, w: 105, h: 15 };
 const BOSS_SCALE = 7;
 const BOSS_DRAW_W = BOSS_FRAME.w * BOSS_SCALE;
 const BOSS_DRAW_H = BOSS_FRAME.h * BOSS_SCALE;
+const OBSTACLE_FRAME_SCALE = 2;
+const ORE_ENTITY_SCALE = 3;
 const ROCK_FRAMES: Record<RockFrameKey, EnemyFrameRect> = {
   rock1: { x: 3, y: 585, w: 56, h: 53 },
   rock2: { x: 67, y: 582, w: 56, h: 56 },
@@ -296,7 +310,8 @@ const BOOST_FRAMES: Record<BoostFrameKey, EnemyFrameRect> = {
   boost4: { x: 1041, y: 200, w: 36, h: 44 },
 };
 const BOOST_FRAME_KEYS: BoostFrameKey[] = ["boost1", "boost2", "boost3", "boost4"];
-const LURE_FRAME: EnemyFrameRect = { x: 2, y: 1, w: 60, h: 94 };
+const ORE_FRAME: EnemyFrameRect = { x: 66, y: 3, w: 29, h: 28 };
+const ORE_DROP_FRAME: EnemyFrameRect = { x: 68, y: 359, w: 21, h: 17 };
 const RAMP_FRAME: EnemyFrameRect = { x: 489, y: 70, w: 81, h: 79 };
 const EXPLOSION_FRAMES: ReadonlyArray<EnemyFrameRect> = [
   { x: 245, y: 262, w: 40, h: 36 },
@@ -319,6 +334,7 @@ const INTRO_BG_REVEAL_DURATION = 1.3;
 const CAMERA_HIT_SHAKE_DURATION = 0.2;
 const CAMERA_HIT_SHAKE_STRENGTH = 20;
 const CAMERA_SHAKE_DRAW_PAD = 48;
+const GAMEPLAY_CAMERA_ZOOM = 1.18;
 const BOSS_SPAWN_SCORE = 1700;
 const GOAL_STRATUM_RESET_SCORE = 4000;
 const GOAL_STRATUM_BANNER_TEXT = "you have reached the goal";
@@ -405,6 +421,13 @@ const BOOST_BREAK_SHAKE_MIN_STRENGTH = 8;
 const BOOST_BREAK_SHAKE_MAX_STRENGTH = 26;
 const BOOST_BREAK_SHAKE_MIN_DURATION = 0.09;
 const BOOST_BREAK_SHAKE_MAX_DURATION = 0.22;
+const ORE_DROP_DELAY_AFTER_EXPLOSION = EXPLOSION_TOTAL_DURATION_UNITS / EXPLOSION_FRAME_FPS;
+const ORE_DROP_TRANSITION_TIME = 0.08;
+const ORE_DROP_LIFETIME = 1.8;
+const ORE_DROP_MAGNET_MIN_SPEED = 620;
+const ORE_DROP_MAGNET_MAX_SPEED = 1550;
+const ORE_DROP_MAGNET_DISTANCE_GAIN = 6.5;
+const ORE_DROP_PICKUP_RADIUS = 24;
 const VIGNETTE_INTENSITY_MULTIPLIER = 3;
 const STRATUM_SPEED_MULTIPLIER_STEP = 1.2;
 const MINIMAP_CANVAS_W = 640;
@@ -434,6 +457,8 @@ const MINIMAP_AI_HAZARD_RADIUS_PAD = 120;
 const MINIMAP_AI_HAZARD_REPULSION = 0.56;
 const MINIMAP_AI_ROUTE_COLOR = "rgba(109, 255, 211, 0.95)";
 const MINIMAP_PLAYER_ROUTE_COLOR = "rgba(235,245,255,0.95)";
+const BOOST_FX_FILL_COLOR = "rgba(255, 196, 58, 0.95)";
+const BOOST_FX_FILL_ALT_COLOR = "rgba(255, 129, 20, 0.9)";
 const MENU_BUTTON_FONT_PX = 48;
 const AUDIO_LABEL_ON = "Audio: ON";
 const AUDIO_LABEL_OFF = "Audio: OFF";
@@ -448,14 +473,13 @@ const DIFFICULTY_CONFIGS: Record<GameDifficulty, DifficultyConfig> = {
 };
 
 const ENTITY_SHEET_META: Record<SpawnType, EntitySheetMeta> = {
-  npc: { w: 64, h: 64, str: "crash", group: "npc", hazard: false, collectible: "none", solid: false },
   boss: { w: BOSS_DRAW_W, h: BOSS_DRAW_H, str: "crash", group: "top", hazard: true, collectible: "none", solid: true },
-  rock: { w: 138, h: 142, str: "crash", group: "top", hazard: true, collectible: "none", solid: true },
-  snag: { w: 123, h: 142, str: "crash", group: "top", hazard: true, collectible: "none", solid: true },
-  ramp: { w: 81, h: 79, str: "boost", group: "top", hazard: true, collectible: "none", solid: true },
+  rock: { w: 138 * OBSTACLE_FRAME_SCALE, h: 142 * OBSTACLE_FRAME_SCALE, str: "crash", group: "top", hazard: true, collectible: "none", solid: true },
+  snag: { w: 123 * OBSTACLE_FRAME_SCALE, h: 142 * OBSTACLE_FRAME_SCALE, str: "crash", group: "top", hazard: true, collectible: "none", solid: true },
+  ramp: { w: 81 * OBSTACLE_FRAME_SCALE, h: 79 * OBSTACLE_FRAME_SCALE, str: "boost", group: "top", hazard: true, collectible: "none", solid: true },
   boost: { w: 36, h: 44, str: "boost", group: "top", hazard: false, collectible: "boost", solid: false },
   life: { w: 64, h: 64, str: "boost", group: "top", hazard: false, collectible: "life", solid: false },
-  lure: { w: 60, h: 94, str: "avoid", group: "top", hazard: true, collectible: "none", solid: true },
+  ore: { w: ORE_FRAME.w * ORE_ENTITY_SCALE, h: ORE_FRAME.h * ORE_ENTITY_SCALE, str: "avoid", group: "top", hazard: true, collectible: "none", solid: true },
 };
 
 const app = document.querySelector<HTMLDivElement>("#app");
@@ -575,8 +599,6 @@ const rocksSpriteSheet = new Image();
 rocksSpriteSheet.src = rocksSpriteSheetUrl;
 const objectsSpriteSheet = new Image();
 objectsSpriteSheet.src = objectsSpriteSheetUrl;
-const graveSpriteSheet = new Image();
-graveSpriteSheet.src = graveSpriteSheetUrl;
 const terrainSpriteSheet = new Image();
 terrainSpriteSheet.src = terrainSpriteSheetUrl;
 const oreSpriteSheet = new Image();
@@ -671,7 +693,7 @@ const clusterLibrary: ClusterLibrary = {
   allHard: {
     crunchA: {
       snag: [[-3, 0], [-1, 1], [1, 1], [3, 0]],
-      lure: [[0, 3]],
+      ore: [[0, 3]],
     },
     crunchB: {
       rock: [[-4, 0], [4, 0], [0, 2]],
@@ -679,16 +701,12 @@ const clusterLibrary: ClusterLibrary = {
     },
     crunchC: {
       rock: [[-3, 0], [0, 1], [3, 0]],
-      lure: [[-1, 3], [1, 3]],
+      ore: [[-1, 3], [1, 3]],
     },
   },
   allPassive: {
-    restA: {
-      npc: [[0, 0, "guide"]],
-    },
-    restB: {
-      npc: [[-1, 0, "left"], [1, 0, "right"]],
-    },
+    restA: {},
+    restB: {},
     restC: {},
   },
   endlessLives: {
@@ -709,16 +727,15 @@ const clusterLibrary: ClusterLibrary = {
       rock: [[-4, 1], [4, 1]],
     },
   },
-  endlessLures: {
-    lureTrap: {
-      lure: [[0, 0, "trap"]],
+  endlessOres: {
+    oreTrap: {
+      ore: [[0, 0, "ore"]],
       snag: [[-3, 2], [3, 2]],
     },
   },
   checkpoints: {
     checkpointA: {
       rock: [[-5, 0], [5, 0]],
-      npc: [[0, 1, "checkpoint"]],
     },
   },
 };
@@ -743,7 +760,6 @@ let audioInteracted = false;
 const world = {
   top: [] as Entity[],
   btm: [] as Entity[],
-  npc: [] as Entity[],
   sleeping: [] as Entity[],
   all: [] as Entity[],
 };
@@ -753,6 +769,7 @@ const fx = {
   boostTrail: [] as FxBoostTrail[],
   explosions: [] as FxExplosion[],
   boostCrashFlashes: [] as FxBoostCrashFlash[],
+  oreDrops: [] as FxOreDrop[],
 };
 
 let entityId = 0;
@@ -809,24 +826,22 @@ const player: PlayerState = {
   vel: { x: 0, y: 0 },
   acc: { x: 0, y: 0 },
   maxSpeed: 260,
-  hitbox: { x: 0, y: 0, w: PLAYER_FRAME_WIDTH, h: PLAYER_FRAME_HEIGHT },
+  hitbox: { x: 0, y: 0, w: PLAYER_HITBOX_WIDTH, h: PLAYER_HITBOX_HEIGHT },
   movementLockTimer: 0,
   invincibleTimer: 0,
 };
 
 const spawner = {
   row: { next: 0, inc: 320 } as SpawnTimer,
-  npc: { next: 30, inc: 90 } as SpawnTimer,
   boostGuaranteed: { next: GUARANTEED_BOOST_UNIT_INTERVAL, inc: GUARANTEED_BOOST_UNIT_INTERVAL } as SpawnTimer,
   checkpoint: { next: 260, inc: 400 } as SpawnTimer,
   life: { next: 180, inc: 320 } as SpawnTimer,
   boost: { next: 130, inc: 270 } as SpawnTimer,
-  lure: { next: 150, inc: 280 } as SpawnTimer,
+  ore: { next: 150, inc: 280 } as SpawnTimer,
   ramp: { next: 170, inc: 260 } as SpawnTimer,
 };
 const spawnBase = {
   row: 320,
-  npc: 90,
 };
 
 const recentClusters: string[] = [];
@@ -1044,22 +1059,19 @@ function updateGridAndSpawnBase(): void {
   grid.slots = 2 * Math.ceil((session.h - session.y) / grid.gap) + 3;
 
   spawnBase.row = Math.max(260, Math.round(grid.gap * 0.78125));
-  spawnBase.npc = Math.max(70, Math.round(spawnBase.row * 0.125));
 }
 
 function resetSpawnTimers(): void {
   spawner.row.next = 0;
   spawner.row.inc = spawnBase.row / OBSTACLE_SPAWN_MULTIPLIER;
-  spawner.npc.next = 30;
-  spawner.npc.inc = spawnBase.npc;
   spawner.boostGuaranteed.next = GUARANTEED_BOOST_UNIT_INTERVAL;
   spawner.boostGuaranteed.inc = GUARANTEED_BOOST_UNIT_INTERVAL;
   spawner.ramp.next = Math.round(spawnBase.row * 0.625);
   spawner.ramp.inc = Math.round(spawnBase.row * 0.625);
   spawner.boost.next = Math.round(spawnBase.row * 0.8125);
   spawner.boost.inc = Math.round(spawnBase.row * 0.625);
-  spawner.lure.next = Math.round(spawnBase.row * 0.875);
-  spawner.lure.inc = Math.round(spawnBase.row * 0.625);
+  spawner.ore.next = Math.round(spawnBase.row * 0.875);
+  spawner.ore.inc = Math.round(spawnBase.row * 0.625);
   spawner.life.next = Math.round(spawnBase.row * 2.5);
   spawner.life.inc = Math.round(spawnBase.row * 1.25);
   spawner.checkpoint.next = Math.round(spawnBase.row * 6.25);
@@ -1108,12 +1120,12 @@ function resetRunState(): void {
   recentClusters.length = 0;
   world.top = sleepAll(world.top);
   world.btm = sleepAll(world.btm);
-  world.npc = sleepAll(world.npc);
   world.all.length = 0;
   fx.particles.length = 0;
   fx.boostTrail.length = 0;
   fx.explosions.length = 0;
   fx.boostCrashFlashes.length = 0;
+  fx.oreDrops.length = 0;
 }
 
 function startNewRun(): void {
@@ -2348,19 +2360,18 @@ function updateDistances(dx: number, dy: number): void {
 function getPhase(unit: number): PhaseConfig {
   const wave = unit % 320;
   if (wave < 120) {
-    return { name: "easy", speedMul: 0.92, rowMul: 1.08, npcMul: 1.05 };
+    return { name: "easy", speedMul: 0.92, rowMul: 1.08 };
   }
   if (wave < 240) {
-    return { name: "hard", speedMul: 1.03, rowMul: 0.84, npcMul: 0.9 };
+    return { name: "hard", speedMul: 1.03, rowMul: 0.84 };
   }
-  return { name: "recovery", speedMul: 0.96, rowMul: 1.16, npcMul: 1.1 };
+  return { name: "recovery", speedMul: 0.96, rowMul: 1.16 };
 }
 
 function applySpawnerPhase(phase: PhaseConfig): void {
   const difficulty = DIFFICULTY_CONFIGS[runDifficulty];
   spawner.row.inc =
     Math.max(220, Math.round(spawnBase.row * phase.rowMul * difficulty.spawnMul)) / OBSTACLE_SPAWN_MULTIPLIER;
-  spawner.npc.inc = Math.max(60, Math.round(spawnBase.npc * phase.npcMul * difficulty.spawnMul));
 }
 
 function getStratumSpeedMultiplier(level: number): number {
@@ -2436,9 +2447,6 @@ function updateSpawnLoop(phase: PhaseConfig): void {
   while (nextReady(spawner.boostGuaranteed, true)) {
     spawnGuaranteedBoost();
   }
-  if (nextReady(spawner.npc)) {
-    createNpc();
-  }
 }
 
 function nextReady(timer: SpawnTimer, useUnit = true): boolean {
@@ -2483,8 +2491,8 @@ function createRow(phase: PhaseConfig): void {
         clusterName = "endlessBoosts";
       } else if (nextReady(spawner.ramp)) {
         clusterName = "endlessRamps";
-      } else if (nextReady(spawner.lure)) {
-        clusterName = "endlessLures";
+      } else if (nextReady(spawner.ore)) {
+        clusterName = "endlessOres";
       } else if (phase.name === "hard") {
         clusterName = Math.random() < 0.52 ? "allHard" : "allNormal";
       }
@@ -2536,7 +2544,7 @@ function buildEndlessRandomSnags(
     [-s / 4, i],
     [s / 4, i],
   ];
-  const singles: SpawnType[] = ["snag", "rock", "lure", "ramp"];
+  const singles: SpawnType[] = ["snag", "rock", "ore", "ramp"];
   const laneRatio = Math.abs(lane) / Math.max(1, laneCount);
   let spawnChance =
     lane === 0 ? 0.14 : laneRatio >= 1 ? 0.3 : laneRatio >= 0.5 ? 0.36 : 0.42;
@@ -2559,17 +2567,6 @@ function buildEndlessRandomSnags(
     const type = Math.random() < 0.5 ? "snag" : randIndex(singles);
     buildObjectWithSpacing(type, x, y, "single");
   }
-}
-
-function createNpc(): void {
-  const x = rand(Math.floor(session.w * 0.22), Math.floor(session.w * 0.78));
-  const y = session.h + rand(80, 220);
-  const npc = buildObjectWithSpacing("npc", x, y, "walker");
-  if (!npc) {
-    return;
-  }
-  npc.vx = Math.random() < 0.5 ? rand(-22, -8) : rand(8, 22);
-  npc.vy = rand(-14, -4);
 }
 
 function spawnGuaranteedBoost(): void {
@@ -2668,7 +2665,7 @@ function hasObjectCollision(type: SpawnType, x: number, y: number): boolean {
     h: meta.h,
   };
 
-  const existing = world.top.concat(world.btm).concat(world.npc);
+  const existing = world.top.concat(world.btm);
   for (const entity of existing) {
     if (entity.sleep) {
       continue;
@@ -2713,9 +2710,6 @@ function buildObject(type: SpawnType, x: number, y: number, variant = ""): Entit
       break;
     case "btm":
       world.btm.push(object);
-      break;
-    case "npc":
-      world.npc.push(object);
       break;
   }
 
@@ -2804,8 +2798,8 @@ function applyRockFrameToEntity(entity: Entity): void {
   const frameKey = randIndex(ROCK_FRAME_KEYS);
   const frame = ROCK_FRAMES[frameKey];
   entity.variant = frameKey;
-  entity.w = frame.w;
-  entity.h = frame.h;
+  entity.w = frame.w * OBSTACLE_FRAME_SCALE;
+  entity.h = frame.h * OBSTACLE_FRAME_SCALE;
 }
 
 function getSnugFrameRect(frameKey: string): EnemyFrameRect {
@@ -2820,8 +2814,8 @@ function applySnugFrameToEntity(entity: Entity): void {
   const frameKey = randIndex(SNUG_FRAME_KEYS);
   const frame = SNUG_FRAMES[frameKey];
   entity.variant = frameKey;
-  entity.w = frame.w;
-  entity.h = frame.h;
+  entity.w = frame.w * OBSTACLE_FRAME_SCALE;
+  entity.h = frame.h * OBSTACLE_FRAME_SCALE;
 }
 
 function getBoostFrameRect(frameKey: string): EnemyFrameRect {
@@ -2862,11 +2856,10 @@ function createSleepingObjects(): void {
     rock: 40,
     snag: 40,
     ramp: 6,
-    lure: 3,
+    ore: 3,
     boost: 2,
     life: 1,
     boss: 1,
-    npc: 10,
   };
 
   const entries = Object.entries(seed) as [SpawnType, number][];
@@ -2880,7 +2873,7 @@ function createSleepingObjects(): void {
 }
 
 function moveEntities(dt: number, worldShift: { x: number; y: number }): void {
-  for (const group of [world.top, world.btm, world.npc]) {
+  for (const group of [world.top, world.btm]) {
     for (const entity of group) {
       entity.x += entity.vx * dt - worldShift.x;
       entity.y += entity.vy * dt - worldShift.y;
@@ -2958,7 +2951,7 @@ function updateCollisions(): void {
     return;
   }
 
-  const groups = [world.top, world.btm, world.npc];
+  const groups = [world.top, world.btm];
 
   for (const group of groups) {
     for (const entity of group) {
@@ -3025,12 +3018,11 @@ function updateCollisions(): void {
 
 function putToSleep(): void {
   const farBottom = session.h + Math.max(900, grid.gap * 3);
-  world.top = sleepTopWithLureSpawn(world.top, -280, farBottom);
+  world.top = sleepTopWithOreSpawn(world.top, -280, farBottom);
   world.btm = sleep(world.btm, -280, farBottom);
-  world.npc = sleep(world.npc, -300, farBottom);
 }
 
-function sleepTopWithLureSpawn(entities: Entity[], minY: number, maxY: number): Entity[] {
+function sleepTopWithOreSpawn(entities: Entity[], minY: number, maxY: number): Entity[] {
   const active: Entity[] = [];
   const sleeping: Entity[] = [];
 
@@ -3075,7 +3067,7 @@ function sleepAll(entities: Entity[]): Entity[] {
 }
 
 function mergeAll(): void {
-  const sortable = [...world.btm, ...world.top, ...world.npc];
+  const sortable = [...world.btm, ...world.top];
   sortable.sort((a, b) => a.y + a.h - (b.y + b.h));
   world.all = sortable;
 }
@@ -3153,6 +3145,25 @@ function spawnExplosionFx(x: number, y: number, scale = 1): void {
   playExplosionSfx();
 }
 
+function spawnOreDropFx(x: number, y: number, sourceScale = 1): void {
+  const dropScale = clamp(ORE_ENTITY_SCALE * 0.92 + sourceScale * 0.08, 2.8, 3.4);
+  fx.oreDrops.push({
+    id: fxId += 1,
+    x,
+    y,
+    vx: rand(-14, 14),
+    vy: rand(24, 48),
+    age: 0,
+    delay: ORE_DROP_DELAY_AFTER_EXPLOSION,
+    ttl: ORE_DROP_DELAY_AFTER_EXPLOSION + ORE_DROP_LIFETIME,
+    scale: dropScale,
+    transitionTtl: ORE_DROP_TRANSITION_TIME,
+  });
+  if (fx.oreDrops.length > FX_EXPLOSION_MAX) {
+    fx.oreDrops.splice(0, fx.oreDrops.length - FX_EXPLOSION_MAX);
+  }
+}
+
 function getExplosionFrameIndex(age: number): number {
   let unitsLeft = Math.max(0, age * EXPLOSION_FRAME_FPS);
   for (let i = 0; i < EXPLOSION_FRAMES.length; i += 1) {
@@ -3198,6 +3209,9 @@ function updateBoostCrashFlashFx(dt: number, worldShift: { x: number; y: number 
     flash.age += dt;
     if (flash.age >= flash.ttl) {
       spawnExplosionFx(flash.explosionX, flash.explosionY, flash.explosionScale);
+      if (flash.type === "ore") {
+        spawnOreDropFx(flash.explosionX, flash.explosionY, flash.explosionScale);
+      }
       continue;
     }
     live.push(flash);
@@ -3206,6 +3220,58 @@ function updateBoostCrashFlashFx(dt: number, worldShift: { x: number; y: number 
 }
 
 function updateFxSystem(dt: number, worldShift: { x: number; y: number }): void {
+  const liveOreDrops: FxOreDrop[] = [];
+  for (const oreDrop of fx.oreDrops) {
+    oreDrop.age += dt;
+    oreDrop.x -= worldShift.x;
+    oreDrop.y -= worldShift.y;
+
+    if (oreDrop.age < oreDrop.delay) {
+      liveOreDrops.push(oreDrop);
+      continue;
+    }
+
+    const activeAge = oreDrop.age - oreDrop.delay;
+    if (activeAge < oreDrop.transitionTtl) {
+      oreDrop.vx *= 0.78;
+      oreDrop.vy = oreDrop.vy * 0.78 + 56 * dt;
+      oreDrop.x += oreDrop.vx * dt;
+      oreDrop.y += oreDrop.vy * dt;
+      if (oreDrop.age < oreDrop.ttl) {
+        liveOreDrops.push(oreDrop);
+      }
+      continue;
+    }
+
+    const targetX = player.pos.x;
+    const targetY = player.pos.y;
+    const dx = targetX - oreDrop.x;
+    const dy = targetY - oreDrop.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist <= ORE_DROP_PICKUP_RADIUS) {
+      spawnPickupFx(targetX, targetY, "boost");
+      playItemSfx();
+      continue;
+    }
+
+    if (dist > 0.0001) {
+      const nx = dx / dist;
+      const ny = dy / dist;
+      const speed = clamp(
+        ORE_DROP_MAGNET_MIN_SPEED + dist * ORE_DROP_MAGNET_DISTANCE_GAIN,
+        ORE_DROP_MAGNET_MIN_SPEED,
+        ORE_DROP_MAGNET_MAX_SPEED
+      );
+      const step = Math.min(dist, speed * dt);
+      oreDrop.x += nx * step;
+      oreDrop.y += ny * step;
+    }
+    if (oreDrop.age < oreDrop.ttl) {
+      liveOreDrops.push(oreDrop);
+    }
+  }
+  fx.oreDrops = liveOreDrops;
+
   const liveTrail: FxBoostTrail[] = [];
   for (const trail of fx.boostTrail) {
     trail.start.x -= 0.8 * worldShift.x;
@@ -3288,10 +3354,11 @@ function render(): void {
   const gameplayScene = scene === "playing" || scene === "paused";
   const cameraOffsetX = gameplayScene ? cameraShakeOffset.x : 0;
   const cameraOffsetY = gameplayScene ? cameraShakeOffset.y : 0;
-  const cameraOffsetActive = gameplayScene && (cameraOffsetX !== 0 || cameraOffsetY !== 0);
-  if (cameraOffsetActive) {
+  if (gameplayScene) {
     ctx.save();
-    ctx.translate(cameraOffsetX, cameraOffsetY);
+    ctx.translate(session.x + cameraOffsetX, session.y + cameraOffsetY);
+    ctx.scale(GAMEPLAY_CAMERA_ZOOM, GAMEPLAY_CAMERA_ZOOM);
+    ctx.translate(-session.x, -session.y);
   }
 
   drawTiledBackground();
@@ -3307,6 +3374,7 @@ function render(): void {
     drawPlayerSprite();
   }
   drawExplosionFx();
+  drawOreDropFx();
 
   drawFxOverlay();
   if (scene !== "menu") {
@@ -3318,7 +3386,7 @@ function render(): void {
   if (scene === "playing" || scene === "paused") {
     drawStratumBannerText();
   }
-  if (cameraOffsetActive) {
+  if (gameplayScene) {
     ctx.restore();
   }
 
@@ -3635,12 +3703,12 @@ function drawEntity(entity: Entity): void {
     ctx.imageSmoothingEnabled = prevSmooth;
     return;
   }
-  if (entity.type === "lure" && graveSpriteSheet.complete && graveSpriteSheet.naturalWidth > 0) {
-    const frame = LURE_FRAME;
+  if (entity.type === "ore" && oreSpriteSheet.complete && oreSpriteSheet.naturalWidth > 0) {
+    const frame = ORE_FRAME;
     const prevSmooth = ctx.imageSmoothingEnabled;
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(
-      graveSpriteSheet,
+      oreSpriteSheet,
       frame.x,
       frame.y,
       frame.w,
@@ -3698,8 +3766,8 @@ function drawBoostCrashFlashFx(): void {
       drawWhiteTintedSpriteFrame(rocksSpriteSheet, frame, flash.x, flash.y, flash.w, flash.h, alpha);
       continue;
     }
-    if (flash.type === "lure" && graveSpriteSheet.complete && graveSpriteSheet.naturalWidth > 0) {
-      drawWhiteTintedSpriteFrame(graveSpriteSheet, LURE_FRAME, flash.x, flash.y, flash.w, flash.h, alpha);
+    if (flash.type === "ore" && oreSpriteSheet.complete && oreSpriteSheet.naturalWidth > 0) {
+      drawWhiteTintedSpriteFrame(oreSpriteSheet, ORE_FRAME, flash.x, flash.y, flash.w, flash.h, alpha);
       continue;
     }
     if (flash.type === "ramp" && terrainSpriteSheet.complete && terrainSpriteSheet.naturalWidth > 0) {
@@ -3799,7 +3867,15 @@ function drawBoostTrailFx(): void {
     ctx.globalAlpha = alpha;
     const mx = (trail.start.x + trail.end.x) * 0.5;
     const my = (trail.start.y + trail.end.y) * 0.5;
-    drawRectWithLabel(mx - 46, my - 10, 92, 20, "");
+    const x = mx - 46;
+    const y = my - 10;
+    const w = 92;
+    const h = 20;
+    const gradient = ctx.createLinearGradient(x, y, x + w, y + h);
+    gradient.addColorStop(0, BOOST_FX_FILL_COLOR);
+    gradient.addColorStop(1, BOOST_FX_FILL_ALT_COLOR);
+    ctx.fillStyle = gradient;
+    ctx.fillRect(x, y, w, h);
   }
   ctx.globalAlpha = 1;
 }
@@ -3839,6 +3915,63 @@ function drawExplosionFx(): void {
   ctx.imageSmoothingEnabled = prevSmooth;
 }
 
+function drawOreDropFx(): void {
+  if (fx.oreDrops.length === 0) {
+    return;
+  }
+  if (!(oreSpriteSheet.complete && oreSpriteSheet.naturalWidth > 0)) {
+    return;
+  }
+
+  const prevSmooth = ctx.imageSmoothingEnabled;
+  const prevAlpha = ctx.globalAlpha;
+  ctx.imageSmoothingEnabled = false;
+  for (const oreDrop of fx.oreDrops) {
+    if (oreDrop.age < oreDrop.delay) {
+      continue;
+    }
+    const activeAge = oreDrop.age - oreDrop.delay;
+    const transitionRatio = clamp(activeAge / oreDrop.transitionTtl, 0, 1);
+    const transitionEase = easeOutCubic(transitionRatio);
+
+    let alpha = 1;
+    if (activeAge < oreDrop.transitionTtl) {
+      alpha = 0.3 + transitionEase * 0.7;
+    } else {
+      const fadeStart = oreDrop.ttl - 0.35;
+      if (oreDrop.age > fadeStart) {
+        alpha = clamp((oreDrop.ttl - oreDrop.age) / 0.35, 0, 1);
+      }
+    }
+    if (alpha <= 0) {
+      continue;
+    }
+
+    const pulse = 0.95 + Math.sin(oreDrop.age * 17) * 0.05;
+    const dropScale = oreDrop.scale * (0.75 + transitionEase * 0.25) * pulse;
+    const drawW = ORE_DROP_FRAME.w * dropScale;
+    const drawH = ORE_DROP_FRAME.h * dropScale;
+
+    ctx.save();
+    ctx.translate(Math.floor(oreDrop.x), Math.floor(oreDrop.y));
+    ctx.globalAlpha = alpha;
+    ctx.drawImage(
+      oreSpriteSheet,
+      ORE_DROP_FRAME.x,
+      ORE_DROP_FRAME.y,
+      ORE_DROP_FRAME.w,
+      ORE_DROP_FRAME.h,
+      Math.floor(-drawW * 0.5),
+      Math.floor(-drawH * 0.5),
+      Math.floor(drawW),
+      Math.floor(drawH)
+    );
+    ctx.restore();
+  }
+  ctx.globalAlpha = prevAlpha;
+  ctx.imageSmoothingEnabled = prevSmooth;
+}
+
 function drawFxOverlay(): void {
   for (const particle of fx.particles) {
     const alpha = 1 - particle.age / particle.ttl;
@@ -3846,13 +3979,25 @@ function drawFxOverlay(): void {
       continue;
     }
     ctx.globalAlpha = alpha;
-    drawRectWithLabel(
-      particle.x - 34,
-      particle.y - 10,
-      68,
-      20,
-      ""
-    );
+    if (particle.kind === "boost") {
+      const x = particle.x - 34;
+      const y = particle.y - 10;
+      const w = 68;
+      const h = 20;
+      const gradient = ctx.createLinearGradient(x, y, x + w, y + h);
+      gradient.addColorStop(0, BOOST_FX_FILL_COLOR);
+      gradient.addColorStop(1, BOOST_FX_FILL_ALT_COLOR);
+      ctx.fillStyle = gradient;
+      ctx.fillRect(x, y, w, h);
+    } else {
+      drawRectWithLabel(
+        particle.x - 34,
+        particle.y - 10,
+        68,
+        20,
+        ""
+      );
+    }
   }
   ctx.globalAlpha = 1;
 }
