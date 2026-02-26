@@ -25,6 +25,7 @@ import winThemeUrl from "./assets/audio/WinTheme.mp3";
 import explosionSfxUrl from "./assets/audio/explosion.mp3";
 import boostSfxUrl from "./assets/audio/boost.mp3";
 import itemSfxUrl from "./assets/audio/item.mp3";
+import hurtSfxUrl from "./assets/audio/hurt.mp3";
 
 type SceneState = "menu" | "playing" | "paused" | "gameover" | "win";
 type Group = "top" | "btm" | "npc";
@@ -607,6 +608,9 @@ const itemAudioPool = Array.from({ length: ITEM_SFX_POOL_SIZE }, () => {
   return track;
 });
 let itemAudioIndex = 0;
+const hurtAudio = new Audio(hurtSfxUrl);
+hurtAudio.preload = "auto";
+hurtAudio.volume = 0.85;
 const gameplayTextureImages: Record<StratumTexture, HTMLImageElement> = {
   mine: new Image(),
   rubble: new Image(),
@@ -1323,6 +1327,8 @@ function pauseAllSceneAudio(): void {
 function pauseAllSfxAudio(): void {
   pauseAudio(boostLoopAudio);
   boostLoopAudio.currentTime = 0;
+  pauseAudio(hurtAudio);
+  hurtAudio.currentTime = 0;
   for (const track of explosionAudioPool) {
     pauseAudio(track);
     track.currentTime = 0;
@@ -1351,6 +1357,14 @@ function playItemSfx(): void {
   itemAudioIndex = (itemAudioIndex + 1) % itemAudioPool.length;
   track.currentTime = 0;
   safePlayAudio(track);
+}
+
+function playHurtSfx(): void {
+  if (!audioEnabled || !audioInteracted) {
+    return;
+  }
+  hurtAudio.currentTime = 0;
+  safePlayAudio(hurtAudio);
 }
 
 function syncBoostLoopAudio(): void {
@@ -2920,6 +2934,7 @@ function onPlayerObstacleHit(): void {
   player.vel.y = 0;
   playerPose = "player_invincible";
   sys.game.lives.current = Math.max(0, sys.game.lives.current - 1);
+  playHurtSfx();
   triggerCameraShake(CAMERA_HIT_SHAKE_STRENGTH, CAMERA_HIT_SHAKE_DURATION);
 }
 
