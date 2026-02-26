@@ -222,6 +222,15 @@ interface FxOreDrop {
   transitionTtl: number;
 }
 
+interface FxTireTrack {
+  x: number;
+  y: number;
+  angle: number;
+  length: number;
+  width: number;
+  alpha: number;
+}
+
 interface EnemyFrameRect {
   x: number;
   y: number;
@@ -255,6 +264,7 @@ interface MinimapHazardSample {
   x: number;
   score: number;
   radius: number;
+  weight: number;
 }
 
 type StratumTexture = "mine" | "rubble";
@@ -398,6 +408,14 @@ const DOWN_DOUBLE_TAP_WINDOW = 0.28;
 const BOOST_DISTANCE_TRACKER = 2000;
 const BOOST_SPEED_MULTIPLIER = 2;
 const BOOST_TRAIL_INTERVAL = 0.08;
+const TIRE_TRACK_INTERVAL = 16;
+const TIRE_TRACK_MIN_SHIFT = 2;
+const TIRE_TRACK_LENGTH = 22;
+const TIRE_TRACK_WIDTH = 7;
+const TIRE_TRACK_LANE_OFFSET = 12;
+const TIRE_TRACK_BACK_OFFSET = 14;
+const TIRE_TRACK_OUTSIDE_PAD = 18;
+const TIRE_TRACK_MAX = 3200;
 const GUARANTEED_BOOST_UNIT_INTERVAL = 50;
 const OBSTACLE_SPAWN_MULTIPLIER = 2;
 const FX_PICKUP_BURST = 6;
@@ -451,10 +469,10 @@ const MINIMAP_AI_CENTER_PULL_MAX = 0.66;
 const MINIMAP_AI_CRASH_AVOID_SCORE_WINDOW = 520;
 const MINIMAP_AI_CRASH_AVOID_OFFSET = 320;
 const MINIMAP_AI_CRASH_AVOID_X_RATIO = 0.18;
-const MINIMAP_AI_X_STEP_RATIO = 0.14;
-const MINIMAP_AI_HAZARD_WINDOW = 180;
-const MINIMAP_AI_HAZARD_RADIUS_PAD = 120;
-const MINIMAP_AI_HAZARD_REPULSION = 0.56;
+const MINIMAP_AI_X_STEP_RATIO = 0.18;
+const MINIMAP_AI_HAZARD_WINDOW = 220;
+const MINIMAP_AI_HAZARD_RADIUS_PAD = 156;
+const MINIMAP_AI_HAZARD_REPULSION = 0.72;
 const MINIMAP_AI_ROUTE_COLOR = "rgba(109, 255, 211, 0.95)";
 const MINIMAP_PLAYER_ROUTE_COLOR = "rgba(235,245,255,0.95)";
 const BOOST_FX_FILL_COLOR = "rgba(255, 196, 58, 0.95)";
@@ -770,6 +788,7 @@ const fx = {
   explosions: [] as FxExplosion[],
   boostCrashFlashes: [] as FxBoostCrashFlash[],
   oreDrops: [] as FxOreDrop[],
+  tireTracks: [] as FxTireTrack[],
 };
 
 let entityId = 0;
@@ -785,6 +804,7 @@ let playerDir: SteerDirection = "down";
 let playerAngle = (-90 * Math.PI) / 180;
 let boostDistanceLeft = 0;
 let boostTrailTick = 0;
+let tireTrackDistanceCarry = 0;
 let lastDownTapTime = -10;
 let fxId = 0;
 let introMenuElapsed = 0;
@@ -965,6 +985,7 @@ function updateScene(dt: number): void {
   if (!shouldStopSpawns) {
     updateSpawnLoop(phase);
   }
+  updateTireTrackPlacement(worldShift);
   moveEntities(dt, effectiveWorldShift);
   updateCollisions();
   updateBoostCrashFlashFx(dt, effectiveWorldShift);
@@ -1092,6 +1113,7 @@ function resetRunState(): void {
   worldSpeed = BASE_WORLD_SPEED;
   boostDistanceLeft = 0;
   boostTrailTick = 0;
+  tireTrackDistanceCarry = 0;
   lastDownTapTime = -10;
   bossSpawned = false;
   goalStratumResetTriggered = false;
@@ -1126,6 +1148,7 @@ function resetRunState(): void {
   fx.explosions.length = 0;
   fx.boostCrashFlashes.length = 0;
   fx.oreDrops.length = 0;
+  fx.tireTracks.length = 0;
 }
 
 function startNewRun(): void {
@@ -1473,10 +1496,19 @@ function recordMinimapHazardSamples(force = false): void {
     if (entity.sleep || !entity.hazard || !entity.solid) {
       continue;
     }
+    let weight = 1;
+    if (entity.type === "ore") {
+      weight = 1.18;
+    } else if (entity.type === "boss") {
+      weight = 1.28;
+    } else if (entity.type === "ramp") {
+      weight = 0.92;
+    }
     minimapHazardSamples.push({
       x: entity.x + entity.w * 0.5,
       score: sampleScore,
-      radius: clamp(Math.max(entity.w, entity.h) * 0.5, 24, 220),
+      radius: clamp(Math.max(entity.w, entity.h) * 0.5 * getMinimapAiHazardRadiusScale(), 26, 260),
+      weight,
     });
   }
 
@@ -1784,8 +1816,12 @@ function buildMinimapVirtualHazards(path: PathPoint[], xMin: number, xMax: numbe
       const laneX = xMin + laneWidth * lane;
       const jitter = (seededNoise(score * 0.121 + lane * 11.3 + i * 5.7) - 0.5) * laneWidth * 0.42;
       const hazardX = clamp(laneX + jitter, xMin, xMax);
-      const radius = clamp(laneWidth * (0.42 + seededNoise(score * 0.097 + lane * 4.9) * 0.36), 20, 92);
-      virtuals.push({ x: hazardX, score, radius });
+      const radius = clamp(
+        laneWidth * (0.46 + seededNoise(score * 0.097 + lane * 4.9) * 0.4) * getMinimapAiHazardRadiusScale(),
+        24,
+        128
+      );
+      virtuals.push({ x: hazardX, score, radius, weight: 1 });
     }
   }
 
@@ -1836,11 +1872,23 @@ function getMinimapHazardAvoidOffset(
       const proximity = 1 - absDx / influenceRadius;
       const dir =
         dx === 0 ? (seededNoise(score * 0.137 + hazard.x * 0.01) > 0.5 ? 1 : -1) : Math.sign(dx);
-      offset += dir * proximity * scoreWeight * hazard.radius * MINIMAP_AI_HAZARD_REPULSION;
+      offset +=
+        dir *
+        proximity *
+        scoreWeight *
+        hazard.radius *
+        (hazard.weight ?? 1) *
+        MINIMAP_AI_HAZARD_REPULSION;
     }
   }
 
   return offset;
+}
+
+function getMinimapAiHazardRadiusScale(): number {
+  const zoomScale = GAMEPLAY_CAMERA_ZOOM;
+  const oreScale = ORE_ENTITY_SCALE / Math.max(1, OBSTACLE_FRAME_SCALE);
+  return clamp(0.88 + zoomScale * 0.18 + oreScale * 0.16, 1, 1.42);
 }
 
 function seededNoise(seed: number): number {
@@ -3113,6 +3161,50 @@ function spawnBoostTrailFx(): void {
   }
 }
 
+function updateTireTrackPlacement(worldShift: { x: number; y: number }): void {
+  const shiftMagnitude = Math.hypot(worldShift.x, worldShift.y);
+  if (shiftMagnitude < TIRE_TRACK_MIN_SHIFT) {
+    return;
+  }
+
+  tireTrackDistanceCarry += shiftMagnitude;
+  const angle = Math.atan2(worldShift.y, worldShift.x);
+  while (tireTrackDistanceCarry >= TIRE_TRACK_INTERVAL) {
+    tireTrackDistanceCarry -= TIRE_TRACK_INTERVAL;
+    spawnTireTrackPair(angle);
+  }
+}
+
+function spawnTireTrackPair(angle: number): void {
+  const dirX = Math.cos(angle);
+  const dirY = Math.sin(angle);
+  const perpX = -dirY;
+  const perpY = dirX;
+  const centerX = player.pos.x - dirX * TIRE_TRACK_BACK_OFFSET;
+  const centerY = player.pos.y - dirY * TIRE_TRACK_BACK_OFFSET;
+  const laneOffset = TIRE_TRACK_LANE_OFFSET;
+
+  fx.tireTracks.push({
+    x: centerX - perpX * laneOffset,
+    y: centerY - perpY * laneOffset,
+    angle,
+    length: TIRE_TRACK_LENGTH + rand(-2, 2),
+    width: TIRE_TRACK_WIDTH + rand(-1, 1),
+    alpha: 0.54 + Math.random() * 0.16,
+  });
+  fx.tireTracks.push({
+    x: centerX + perpX * laneOffset,
+    y: centerY + perpY * laneOffset,
+    angle,
+    length: TIRE_TRACK_LENGTH + rand(-2, 2),
+    width: TIRE_TRACK_WIDTH + rand(-1, 1),
+    alpha: 0.54 + Math.random() * 0.16,
+  });
+  if (fx.tireTracks.length > TIRE_TRACK_MAX) {
+    fx.tireTracks.splice(0, fx.tireTracks.length - TIRE_TRACK_MAX);
+  }
+}
+
 function spawnPickupFx(x: number, y: number, pickup: "life" | "boost"): void {
   const kind: FxKind = pickup === "life" ? "pickupLife" : "pickupBoost";
   for (let i = 0; i < FX_PICKUP_BURST; i += 1) {
@@ -3220,6 +3312,22 @@ function updateBoostCrashFlashFx(dt: number, worldShift: { x: number; y: number 
 }
 
 function updateFxSystem(dt: number, worldShift: { x: number; y: number }): void {
+  const liveTireTracks: FxTireTrack[] = [];
+  for (const track of fx.tireTracks) {
+    track.x -= worldShift.x;
+    track.y -= worldShift.y;
+    const radius = Math.max(track.length, track.width) * 0.5 + TIRE_TRACK_OUTSIDE_PAD;
+    const isOutside =
+      track.x < -radius ||
+      track.x > session.w + radius ||
+      track.y < -radius ||
+      track.y > session.h + radius;
+    if (!isOutside) {
+      liveTireTracks.push(track);
+    }
+  }
+  fx.tireTracks = liveTireTracks;
+
   const liveOreDrops: FxOreDrop[] = [];
   for (const oreDrop of fx.oreDrops) {
     oreDrop.age += dt;
@@ -3362,6 +3470,7 @@ function render(): void {
   }
 
   drawTiledBackground();
+  drawTireTrackFx();
 
   for (const entity of world.all) {
     drawEntity(entity);
@@ -3853,6 +3962,31 @@ function getPlayerSpriteFrameIndex(): number {
 
 function getBoostSpriteFrameIndex(): number {
   return Math.floor(sys.game.time.elapsed * BOOST_ANIMATION_FPS) % BOOST_FRAME_KEYS.length;
+}
+
+function drawTireTrackFx(): void {
+  if (fx.tireTracks.length === 0) {
+    return;
+  }
+
+  const prevAlpha = ctx.globalAlpha;
+  const prevFillStyle = ctx.fillStyle;
+  for (const track of fx.tireTracks) {
+    ctx.save();
+    ctx.translate(Math.floor(track.x), Math.floor(track.y));
+    ctx.rotate(track.angle);
+    ctx.globalAlpha = track.alpha;
+    ctx.fillStyle = BLACK;
+    ctx.fillRect(
+      Math.floor(-track.length * 0.5),
+      Math.floor(-track.width * 0.5),
+      Math.floor(track.length),
+      Math.floor(track.width)
+    );
+    ctx.restore();
+  }
+  ctx.globalAlpha = prevAlpha;
+  ctx.fillStyle = prevFillStyle;
 }
 
 function drawBoostTrailFx(): void {
