@@ -235,6 +235,20 @@ interface FxExplosion {
   ttl: number;
 }
 
+interface FxBoostCrashFlash {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  type: EntityType;
+  variant: string;
+  age: number;
+  ttl: number;
+  explosionX: number;
+  explosionY: number;
+  explosionScale: number;
+}
+
 interface EnemyFrameRect {
   x: number;
   y: number;
@@ -427,6 +441,14 @@ const BASE_WORLD_SPEED = 150;
 const ENEMY_OBSTACLE_BLOCK_TIME = 1.0;
 const PLAYER_HIT_LOCK_TIME = 1.0;
 const PLAYER_INVINCIBLE_MOVE_TIME = 3.0;
+const BOOST_CRASH_HIT_STOP_MIN_TIME = 0.06;
+const BOOST_CRASH_HIT_STOP_MAX_TIME = 0.18;
+const BOOST_CRASH_FLASH_MIN_TIME = 0.03;
+const BOOST_CRASH_FLASH_MAX_TIME = 0.08;
+const BOOST_CRASH_RECOIL_MIN_SPEED = 420;
+const BOOST_CRASH_RECOIL_MAX_SPEED = 900;
+const BOOST_CRASH_RECOIL_DURATION = 0.16;
+const FX_BOOST_CRASH_FLASH_MAX = 24;
 const DOWN_DOUBLE_TAP_WINDOW = 0.28;
 const BOOST_DISTANCE_TRACKER = 2000;
 const BOOST_SPEED_MULTIPLIER = 2;
@@ -454,6 +476,13 @@ const FX_TRAIL_TTL = 0.5;
 const FX_PARTICLE_MAX = 180;
 const FX_EXPLOSION_MAX = 64;
 const EXPLOSION_FRAME_FPS = 18;
+const EXPLOSION_SLOW_FRAME_START_INDEX = 3;
+const EXPLOSION_SLOW_FRAME_MULTIPLIER = 2;
+const EXPLOSION_TOTAL_DURATION_UNITS = EXPLOSION_FRAMES.reduce(
+  (sum, _frame, index) =>
+    sum + (index >= EXPLOSION_SLOW_FRAME_START_INDEX ? EXPLOSION_SLOW_FRAME_MULTIPLIER : 1),
+  0
+);
 const EXPLOSION_BASE_FRAME_W = 47;
 const EXPLOSION_BASE_FRAME_H = 42;
 const BOOST_BREAK_SIZE_MIN = 60;
@@ -799,6 +828,7 @@ const fx = {
   particles: [] as FxParticle[],
   boostTrail: [] as FxBoostTrail[],
   explosions: [] as FxExplosion[],
+  boostCrashFlashes: [] as FxBoostCrashFlash[],
 };
 
 let entityId = 0;
@@ -821,6 +851,13 @@ let introMenuElapsed = 0;
 let cameraShakeTimeLeft = 0;
 let cameraShakeDuration = 0;
 let cameraShakeStrength = 0;
+let hitStopTimer = 0;
+const boostCrashRecoil = {
+  direction: { x: 0, y: -1 } as Vec2,
+  speed: 0,
+  timeLeft: 0,
+  duration: BOOST_CRASH_RECOIL_DURATION,
+};
 const cameraShakeOffset: Vec2 = { x: 0, y: 0 };
 const cameraEventOffset: Vec2 = { x: 0, y: 0 };
 const runPath: PathPoint[] = [];
@@ -909,8 +946,22 @@ function loop(now: number): void {
 
 let lastFrameTime = performance.now();
 
+function consumeHitStop(dt: number): boolean {
+  if (scene !== "playing" || hitStopTimer <= 0) {
+    return false;
+  }
+  updateBoostCrashFlashFx(dt, { x: 0, y: 0 });
+  hitStopTimer = Math.max(0, hitStopTimer - dt);
+  return true;
+}
+
 function updateScene(dt: number): void {
-  updateCameraShake(dt);
+  const isHitStopActive = consumeHitStop(dt);
+  updateCameraShake(isHitStopActive ? 0 : dt);
+  if (isHitStopActive) {
+    updateHUD();
+    return;
+  }
 
   if (scene === "menu") {
     introMenuElapsed += dt;
@@ -981,14 +1032,20 @@ function updateScene(dt: number): void {
       x: steer.x * forward,
       y: Math.max(forward * 0.58, steer.y * forward),
     };
+  const recoilShift = consumeBoostCrashRecoil(dt);
+  const effectiveWorldShift = {
+    x: worldShift.x + recoilShift.x,
+    y: worldShift.y + recoilShift.y,
+  };
   updateDistances(worldShift.x * 0.1, worldShift.y);
   updateBoostState(dt, worldShift);
 
   updateSpawnLoop(phase);
-  moveEntities(dt, worldShift);
+  moveEntities(dt, effectiveWorldShift);
   updateFireEntities(dt);
   updateCollisions();
-  updateFxSystem(dt, worldShift);
+  updateBoostCrashFlashFx(dt, effectiveWorldShift);
+  updateFxSystem(dt, effectiveWorldShift);
   putToSleep();
   mergeAll();
 
@@ -1139,6 +1196,11 @@ function resetRunState(): void {
   stratumTransition.from = 1;
   stratumTransition.to = 1;
   stratumTransition.progress = 1;
+  hitStopTimer = 0;
+  boostCrashRecoil.timeLeft = 0;
+  boostCrashRecoil.speed = 0;
+  boostCrashRecoil.direction.x = 0;
+  boostCrashRecoil.direction.y = -1;
   stratumBanner.text = "Stratum 1";
   stratumBanner.timer = stratumBanner.duration;
   resetSpawnTimers();
@@ -1155,6 +1217,7 @@ function resetRunState(): void {
   fx.particles.length = 0;
   fx.boostTrail.length = 0;
   fx.explosions.length = 0;
+  fx.boostCrashFlashes.length = 0;
 }
 
 function startNewRun(): void {
@@ -3176,6 +3239,41 @@ function isPlayerInvincible(): boolean {
   return player.movementLockTimer > 0 || player.invincibleTimer > 0;
 }
 
+function triggerHitStop(duration = BOOST_CRASH_HIT_STOP_MIN_TIME): void {
+  hitStopTimer = Math.max(hitStopTimer, duration);
+}
+
+function triggerBoostCrashRecoil(impact: number): void {
+  const steer = getSteerVector();
+  const length = Math.hypot(steer.x, steer.y);
+  if (length > 0.0001) {
+    boostCrashRecoil.direction.x = -steer.x / length;
+    boostCrashRecoil.direction.y = -steer.y / length;
+  } else {
+    boostCrashRecoil.direction.x = 0;
+    boostCrashRecoil.direction.y = -1;
+  }
+  boostCrashRecoil.speed =
+    BOOST_CRASH_RECOIL_MIN_SPEED +
+    (BOOST_CRASH_RECOIL_MAX_SPEED - BOOST_CRASH_RECOIL_MIN_SPEED) * clamp(impact, 0, 1);
+  boostCrashRecoil.duration = BOOST_CRASH_RECOIL_DURATION;
+  boostCrashRecoil.timeLeft = BOOST_CRASH_RECOIL_DURATION;
+}
+
+function consumeBoostCrashRecoil(dt: number): Vec2 {
+  if (boostCrashRecoil.timeLeft <= 0) {
+    return { x: 0, y: 0 };
+  }
+  boostCrashRecoil.timeLeft = Math.max(0, boostCrashRecoil.timeLeft - dt);
+  const t = boostCrashRecoil.duration > 0 ? boostCrashRecoil.timeLeft / boostCrashRecoil.duration : 0;
+  const eased = t * t;
+  const recoilDistance = boostCrashRecoil.speed * eased * dt;
+  return {
+    x: boostCrashRecoil.direction.x * recoilDistance,
+    y: boostCrashRecoil.direction.y * recoilDistance,
+  };
+}
+
 function onPlayerObstacleHit(): void {
   player.movementLockTimer = PLAYER_HIT_LOCK_TIME;
   player.invincibleTimer = PLAYER_INVINCIBLE_MOVE_TIME;
@@ -3255,10 +3353,18 @@ function updateCollisions(): void {
         const shakeDuration =
           BOOST_BREAK_SHAKE_MIN_DURATION +
           (BOOST_BREAK_SHAKE_MAX_DURATION - BOOST_BREAK_SHAKE_MIN_DURATION) * impact;
+        const hitStopDuration =
+          BOOST_CRASH_HIT_STOP_MIN_TIME +
+          (BOOST_CRASH_HIT_STOP_MAX_TIME - BOOST_CRASH_HIT_STOP_MIN_TIME) * impact;
+        const flashDuration =
+          BOOST_CRASH_FLASH_MIN_TIME +
+          (BOOST_CRASH_FLASH_MAX_TIME - BOOST_CRASH_FLASH_MIN_TIME) * impact;
         const explosionScale = getExplosionScaleForEntity(entity);
+        spawnBoostCrashFlashFx(entity, flashDuration, explosionScale);
+        triggerBoostCrashRecoil(impact);
+        triggerHitStop(hitStopDuration);
         removeEntityForBoostCrash(entity);
         triggerCameraShake(shakeStrength, shakeDuration);
-        spawnExplosionFx(entity.x + entity.w * 0.5, entity.y + entity.h * 0.5, explosionScale);
         continue;
       }
 
@@ -3439,7 +3545,7 @@ function spawnHitFx(x: number, y: number): void {
 }
 
 function spawnExplosionFx(x: number, y: number, scale = 1): void {
-  const ttl = EXPLOSION_FRAMES.length / EXPLOSION_FRAME_FPS;
+  const ttl = EXPLOSION_TOTAL_DURATION_UNITS / EXPLOSION_FRAME_FPS;
   fx.explosions.push({
     x,
     y,
@@ -3450,6 +3556,58 @@ function spawnExplosionFx(x: number, y: number, scale = 1): void {
   if (fx.explosions.length > FX_EXPLOSION_MAX) {
     fx.explosions.splice(0, fx.explosions.length - FX_EXPLOSION_MAX);
   }
+}
+
+function getExplosionFrameIndex(age: number): number {
+  let unitsLeft = Math.max(0, age * EXPLOSION_FRAME_FPS);
+  for (let i = 0; i < EXPLOSION_FRAMES.length; i += 1) {
+    const frameUnits = i >= EXPLOSION_SLOW_FRAME_START_INDEX ? EXPLOSION_SLOW_FRAME_MULTIPLIER : 1;
+    if (unitsLeft < frameUnits) {
+      return i;
+    }
+    unitsLeft -= frameUnits;
+  }
+  return EXPLOSION_FRAMES.length - 1;
+}
+
+function spawnBoostCrashFlashFx(entity: Entity, ttl: number, explosionScale: number): void {
+  fx.boostCrashFlashes.push({
+    x: entity.x,
+    y: entity.y,
+    w: entity.w,
+    h: entity.h,
+    type: entity.type,
+    variant: entity.variant,
+    age: 0,
+    ttl,
+    explosionX: entity.x + entity.w * 0.5,
+    explosionY: entity.y + entity.h * 0.5,
+    explosionScale,
+  });
+  if (fx.boostCrashFlashes.length > FX_BOOST_CRASH_FLASH_MAX) {
+    fx.boostCrashFlashes.splice(0, fx.boostCrashFlashes.length - FX_BOOST_CRASH_FLASH_MAX);
+  }
+}
+
+function updateBoostCrashFlashFx(dt: number, worldShift: { x: number; y: number }): void {
+  if (fx.boostCrashFlashes.length === 0) {
+    return;
+  }
+
+  const live: FxBoostCrashFlash[] = [];
+  for (const flash of fx.boostCrashFlashes) {
+    flash.x -= worldShift.x;
+    flash.y -= worldShift.y;
+    flash.explosionX -= worldShift.x;
+    flash.explosionY -= worldShift.y;
+    flash.age += dt;
+    if (flash.age >= flash.ttl) {
+      spawnExplosionFx(flash.explosionX, flash.explosionY, flash.explosionScale);
+      continue;
+    }
+    live.push(flash);
+  }
+  fx.boostCrashFlashes = live;
 }
 
 function updateFxSystem(dt: number, worldShift: { x: number; y: number }): void {
@@ -3704,6 +3862,7 @@ function render(): void {
     drawEntity(entity);
   }
   drawFireEntities();
+  drawBoostCrashFlashFx();
 
   drawBoostTrailFx();
 
@@ -4085,6 +4244,72 @@ function drawEntity(entity: Entity): void {
   drawRectWithLabel(entity.x, entity.y, entity.w, entity.h, entity.label);
 }
 
+function drawBoostCrashFlashFx(): void {
+  if (fx.boostCrashFlashes.length === 0) {
+    return;
+  }
+
+  for (const flash of fx.boostCrashFlashes) {
+    const alpha = clamp(1 - flash.age / flash.ttl, 0, 1);
+    if (alpha <= 0) {
+      continue;
+    }
+    if (flash.type === "rock" && rocksSpriteSheet.complete && rocksSpriteSheet.naturalWidth > 0) {
+      const frame = getRockFrameRect(flash.variant);
+      drawWhiteTintedSpriteFrame(rocksSpriteSheet, frame, flash.x, flash.y, flash.w, flash.h, alpha);
+      continue;
+    }
+    if (flash.type === "snag" && rocksSpriteSheet.complete && rocksSpriteSheet.naturalWidth > 0) {
+      const frame = getSnugFrameRect(flash.variant);
+      drawWhiteTintedSpriteFrame(rocksSpriteSheet, frame, flash.x, flash.y, flash.w, flash.h, alpha);
+      continue;
+    }
+    if (flash.type === "lure" && graveSpriteSheet.complete && graveSpriteSheet.naturalWidth > 0) {
+      drawWhiteTintedSpriteFrame(graveSpriteSheet, LURE_FRAME, flash.x, flash.y, flash.w, flash.h, alpha);
+      continue;
+    }
+    if (flash.type === "ramp" && terrainSpriteSheet.complete && terrainSpriteSheet.naturalWidth > 0) {
+      drawWhiteTintedSpriteFrame(terrainSpriteSheet, RAMP_FRAME, flash.x, flash.y, flash.w, flash.h, alpha);
+      continue;
+    }
+
+    ctx.globalAlpha = alpha * 0.9;
+    ctx.fillStyle = WHITE;
+    ctx.fillRect(Math.floor(flash.x), Math.floor(flash.y), flash.w, flash.h);
+    ctx.globalAlpha = 1;
+  }
+}
+
+function drawWhiteTintedSpriteFrame(
+  sheet: HTMLImageElement,
+  frame: EnemyFrameRect,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  alpha: number
+): void {
+  ctx.save();
+  ctx.imageSmoothingEnabled = false;
+  ctx.globalAlpha = 1;
+  ctx.drawImage(
+    sheet,
+    frame.x,
+    frame.y,
+    frame.w,
+    frame.h,
+    Math.floor(x),
+    Math.floor(y),
+    w,
+    h
+  );
+  ctx.globalCompositeOperation = "source-atop";
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = WHITE;
+  ctx.fillRect(Math.floor(x), Math.floor(y), w, h);
+  ctx.restore();
+}
+
 function drawFireEntities(): void {
   if (!(fireSpriteSheet.complete && fireSpriteSheet.naturalWidth > 0)) {
     return;
@@ -4184,7 +4409,7 @@ function drawExplosionFx(): void {
   const prevSmooth = ctx.imageSmoothingEnabled;
   ctx.imageSmoothingEnabled = false;
   for (const explosion of fx.explosions) {
-    const frameIndex = Math.floor(explosion.age * EXPLOSION_FRAME_FPS);
+    const frameIndex = getExplosionFrameIndex(explosion.age);
     const frame = EXPLOSION_FRAMES[frameIndex] ?? EXPLOSION_FRAMES[EXPLOSION_FRAMES.length - 1];
     if (!frame) {
       continue;
