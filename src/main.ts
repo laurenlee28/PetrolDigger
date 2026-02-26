@@ -39,6 +39,8 @@ type SpawnType =
   | "lure";
 type EntityType = SpawnType | "player";
 type PhaseName = "easy" | "hard" | "recovery";
+type GameDifficulty = "easy" | "normal" | "hard";
+type MenuOverlayMode = "main" | "difficulty";
 type SteerDirection = "left" | "right" | "downleft" | "downright" | "down" | "stop";
 type PlayerPose =
   | "player_left"
@@ -151,6 +153,12 @@ interface PhaseConfig {
   npcMul: number;
 }
 
+interface DifficultyConfig {
+  label: string;
+  speedMul: number;
+  spawnMul: number;
+}
+
 interface EnemyChaseState {
   mode: "chase" | "orbit_entry" | "orbit";
   angle: number;
@@ -254,6 +262,12 @@ interface IntroOreSprite {
 interface PathPoint {
   x: number;
   score: number;
+}
+
+interface MinimapHazardSample {
+  x: number;
+  score: number;
+  radius: number;
 }
 
 type StratumTexture = "mine" | "rubble";
@@ -369,8 +383,8 @@ const STRATUM_CONFIGS: ReadonlyArray<StratumConfig> = [
     level: 1,
     label: "Stratum 1",
     maxScore: 1000,
-    colorTop: "#f0b15c",
-    colorBottom: "#c3742e",
+    colorTop: "#bbb09b",
+    colorBottom: "#8f8572",
     texture: "mine",
     textureAlpha: 0.14,
     vignetteAlpha: 0.2,
@@ -379,8 +393,8 @@ const STRATUM_CONFIGS: ReadonlyArray<StratumConfig> = [
     level: 2,
     label: "Stratum 2",
     maxScore: 2000,
-    colorTop: "#d39c56",
-    colorBottom: "#8f5a32",
+    colorTop: "#85979a",
+    colorBottom: "#5f6b6d",
     texture: "mine",
     textureAlpha: 0.17,
     vignetteAlpha: 0.5,
@@ -458,11 +472,35 @@ const MINIMAP_SCORE_MAX = MINIMAP_STRATUM_SPAN_SCORE * 4;
 const MINIMAP_PATH_MAX_POINTS = 2200;
 const MINIMAP_PATH_SAMPLE_SCORE_STEP = 7;
 const MINIMAP_PATH_SAMPLE_X_STEP = 6;
+const MINIMAP_HAZARD_SAMPLE_SCORE_STEP = 16;
+const MINIMAP_HAZARD_MAX_SAMPLES = 4200;
+const MINIMAP_AI_VIRTUAL_HAZARD_SCORE_STEP = 56;
+const MINIMAP_AI_VIRTUAL_HAZARD_AHEAD = 1600;
+const MINIMAP_AI_VIRTUAL_HAZARD_LANES = 5;
+const MINIMAP_AI_VIRTUAL_HAZARD_MIN_PER_STEP = 1;
+const MINIMAP_AI_VIRTUAL_HAZARD_MAX_PER_STEP = 4;
+const MINIMAP_AI_SCORE_STEP = 36;
+const MINIMAP_AI_CENTER_PULL_MIN = 0.38;
+const MINIMAP_AI_CENTER_PULL_MAX = 0.66;
+const MINIMAP_AI_CRASH_AVOID_SCORE_WINDOW = 520;
+const MINIMAP_AI_CRASH_AVOID_OFFSET = 320;
+const MINIMAP_AI_CRASH_AVOID_X_RATIO = 0.18;
+const MINIMAP_AI_X_STEP_RATIO = 0.14;
+const MINIMAP_AI_HAZARD_WINDOW = 180;
+const MINIMAP_AI_HAZARD_RADIUS_PAD = 120;
+const MINIMAP_AI_HAZARD_REPULSION = 0.56;
+const MINIMAP_AI_ROUTE_COLOR = "rgba(109, 255, 211, 0.95)";
+const MINIMAP_PLAYER_ROUTE_COLOR = "rgba(235,245,255,0.95)";
 const MENU_BUTTON_FONT_PX = 48;
 const AUDIO_LABEL_ON = "Audio: ON";
 const AUDIO_LABEL_OFF = "Audio: OFF";
 const WIN_TARGET_SCORE = 5000;
 const SCORE_SCALE = 3.75;
+const DIFFICULTY_CONFIGS: Record<GameDifficulty, DifficultyConfig> = {
+  easy: { label: "Easy", speedMul: 0.9, spawnMul: 1.12 },
+  normal: { label: "Normal", speedMul: 1, spawnMul: 1 },
+  hard: { label: "Hard", speedMul: 1.14, spawnMul: 0.88 },
+};
 
 const ENTITY_SHEET_META: Record<SpawnType, EntitySheetMeta> = {
   npc: { w: 64, h: 64, str: "crash", group: "npc", hazard: false, collectible: "none", solid: false },
@@ -538,6 +576,26 @@ overlayPrompt.type = "button";
 const overlayActions = document.createElement("div");
 overlayActions.className = "overlay-actions";
 
+const overlayDifficultyActions = document.createElement("div");
+overlayDifficultyActions.className = "overlay-actions overlay-difficulty hidden";
+
+const overlayDifficultyEasy = document.createElement("button");
+overlayDifficultyEasy.className = "overlay-button difficulty-button difficulty-easy";
+overlayDifficultyEasy.type = "button";
+overlayDifficultyEasy.textContent = "Easy";
+
+const overlayDifficultyNormal = document.createElement("button");
+overlayDifficultyNormal.className = "overlay-button difficulty-button difficulty-normal";
+overlayDifficultyNormal.type = "button";
+overlayDifficultyNormal.textContent = "Normal";
+
+const overlayDifficultyHard = document.createElement("button");
+overlayDifficultyHard.className = "overlay-button difficulty-button difficulty-hard";
+overlayDifficultyHard.type = "button";
+overlayDifficultyHard.textContent = "Hard";
+
+overlayDifficultyActions.append(overlayDifficultyEasy, overlayDifficultyNormal, overlayDifficultyHard);
+
 const overlayHowToPlay = document.createElement("button");
 overlayHowToPlay.className = "overlay-button";
 overlayHowToPlay.type = "button";
@@ -566,7 +624,7 @@ audioToggle.textContent = AUDIO_LABEL_ON;
 audioToggle.setAttribute("aria-label", "Toggle Audio");
 audioToggle.setAttribute("aria-pressed", "true");
 
-overlay.append(overlayTitle, overlayPrompt, overlayActions, overlayMessage, overlayMinimap);
+overlay.append(overlayTitle, overlayPrompt, overlayDifficultyActions, overlayActions, overlayMessage, overlayMinimap);
 stage.append(canvas, overlay);
 root.append(hud, stage, audioToggle);
 app.replaceChildren(root);
@@ -721,6 +779,10 @@ const pressedKeys = new Set<string>();
 let pendingStart = false;
 let pendingRestart = false;
 let pendingPauseToggle = false;
+let pendingDifficultyStart: GameDifficulty | null = null;
+let menuOverlayMode: MenuOverlayMode = "main";
+let selectedDifficulty: GameDifficulty = "normal";
+let runDifficulty: GameDifficulty = "normal";
 let audioEnabled = true;
 let audioInteracted = false;
 
@@ -762,6 +824,8 @@ let cameraShakeStrength = 0;
 const cameraShakeOffset: Vec2 = { x: 0, y: 0 };
 const cameraEventOffset: Vec2 = { x: 0, y: 0 };
 const runPath: PathPoint[] = [];
+const minimapHazardSamples: MinimapHazardSample[] = [];
+let minimapHazardSampleScoreBin = -1;
 const wolfEncounter = {
   triggered: false,
   active: false,
@@ -852,6 +916,15 @@ function updateScene(dt: number): void {
     introMenuElapsed += dt;
     if (pendingStart) {
       pendingStart = false;
+      if (menuOverlayMode === "main") {
+        menuOverlayMode = "difficulty";
+        uiDirty = true;
+      }
+    }
+    if (pendingDifficultyStart) {
+      selectedDifficulty = pendingDifficultyStart;
+      runDifficulty = pendingDifficultyStart;
+      pendingDifficultyStart = null;
       startNewRun();
     }
     updateHUD();
@@ -920,11 +993,14 @@ function updateScene(dt: number): void {
   mergeAll();
 
   currentScore = Math.floor(sys.game.dist.unit * SCORE_SCALE);
+  recordMinimapHazardSamples();
   recordRunPathPoint();
   if (!wolfEncounter.triggered && currentScore >= WOLF_EVENT_TRIGGER_SCORE) {
-    startWolfEncounter();
-    updateHUD();
-    return;
+    // Temporary OFF: camera move/wolf encounter sequence at 4000 score.
+    void startWolfEncounter;
+    // startWolfEncounter();
+    // updateHUD();
+    // return;
   }
   updateStratumState(dt);
   toastTimer = Math.max(0, toastTimer - dt);
@@ -1068,6 +1144,7 @@ function resetRunState(): void {
   resetSpawnTimers();
   resetCameraShake();
   resetRunPath();
+  resetMinimapHazardSamples();
 
   recentClusters.length = 0;
   world.top = sleepAll(world.top);
@@ -1081,6 +1158,7 @@ function resetRunState(): void {
 }
 
 function startNewRun(): void {
+  runDifficulty = selectedDifficulty;
   resetRunState();
   stats.plays += 1;
   saveStats(stats);
@@ -1092,6 +1170,7 @@ function finishRun(reason: "obstacle" | "enemy" | "win"): void {
     return;
   }
 
+  recordMinimapHazardSamples(true);
   recordRunPathPoint(true);
   sys.game.finish = true;
   sys.game.caught = reason === "enemy";
@@ -1123,6 +1202,9 @@ function setScene(next: SceneState): void {
   }
   if (next === "menu" && prev !== "menu") {
     resetIntroPresentation();
+    menuOverlayMode = "main";
+    pendingDifficultyStart = null;
+    pendingStart = false;
     introThemeAudio.currentTime = 0;
   }
   if (next === "gameover" && prev !== "gameover") {
@@ -1145,10 +1227,23 @@ function syncOverlay(): void {
     root.classList.remove("result-win-ui");
     stage.classList.remove("gameover-blur");
     overlay.classList.remove("hidden");
-    overlayActions.classList.remove("hidden");
-    setAnimatedOverlayTitle("Geosteering Quest");
-    overlayPrompt.textContent = "Game Start";
-    overlayMessage.textContent = "";
+    if (menuOverlayMode === "main") {
+      setAnimatedOverlayTitle("Geosteering Quest");
+    }
+    if (menuOverlayMode === "difficulty") {
+      overlayPrompt.classList.add("hidden");
+      overlayActions.classList.add("hidden");
+      overlayDifficultyActions.classList.remove("hidden");
+      overlayMessage.classList.add("hidden");
+      overlayMessage.textContent = "";
+    } else {
+      overlayPrompt.classList.remove("hidden");
+      overlayActions.classList.remove("hidden");
+      overlayDifficultyActions.classList.add("hidden");
+      overlayPrompt.textContent = "Game Start";
+      overlayMessage.classList.remove("hidden");
+      overlayMessage.textContent = "";
+    }
     applyMenuButtonFontSize(true);
     overlayMinimap.classList.add("hidden");
     return;
@@ -1161,7 +1256,10 @@ function syncOverlay(): void {
     root.classList.remove("result-win-ui");
     stage.classList.remove("gameover-blur");
     overlay.classList.remove("hidden");
+    overlayPrompt.classList.remove("hidden");
     overlayActions.classList.add("hidden");
+    overlayDifficultyActions.classList.add("hidden");
+    overlayMessage.classList.remove("hidden");
     setPlainOverlayTitle("paused");
     overlayPrompt.textContent = "press space to resume";
     overlayMessage.textContent = `score ${currentScore}`;
@@ -1177,7 +1275,10 @@ function syncOverlay(): void {
     root.classList.remove("result-win-ui");
     stage.classList.add("gameover-blur");
     overlay.classList.remove("hidden");
+    overlayPrompt.classList.remove("hidden");
     overlayActions.classList.add("hidden");
+    overlayDifficultyActions.classList.add("hidden");
+    overlayMessage.classList.remove("hidden");
     setPlainOverlayTitle("game over");
     overlayPrompt.textContent = "press space to return menu";
     const recordText = sys.game.highScore ? " | new high score!" : "";
@@ -1195,13 +1296,17 @@ function syncOverlay(): void {
     root.classList.add("result-win-ui");
     stage.classList.add("gameover-blur");
     overlay.classList.remove("hidden");
+    overlayPrompt.classList.remove("hidden");
     overlayActions.classList.add("hidden");
+    overlayDifficultyActions.classList.add("hidden");
+    overlayMessage.classList.remove("hidden");
     setPlainOverlayTitle("win");
     overlayPrompt.textContent = "press space to return menu";
     const recordText = sys.game.highScore ? " | new high score!" : "";
     overlayMessage.textContent = `${gameOverReason} | score ${currentScore}${recordText}`;
     applyMenuButtonFontSize(false);
-    overlayMinimap.classList.add("hidden");
+    overlayMinimap.classList.remove("hidden");
+    drawRunPathMinimap();
     return;
   }
 
@@ -1211,12 +1316,22 @@ function syncOverlay(): void {
   root.classList.remove("result-win-ui");
   stage.classList.remove("gameover-blur");
   overlay.classList.add("hidden");
+  overlayPrompt.classList.remove("hidden");
+  overlayDifficultyActions.classList.add("hidden");
+  overlayMessage.classList.remove("hidden");
   overlayMinimap.classList.add("hidden");
   applyMenuButtonFontSize(false);
 }
 
 function applyMenuButtonFontSize(enabled: boolean): void {
-  const buttons = [overlayPrompt, overlayHowToPlay, overlayScoreBoard];
+  const buttons = [
+    overlayPrompt,
+    overlayHowToPlay,
+    overlayScoreBoard,
+    overlayDifficultyEasy,
+    overlayDifficultyNormal,
+    overlayDifficultyHard,
+  ];
   if (!enabled) {
     for (const button of buttons) {
       button.style.fontSize = "";
@@ -1304,6 +1419,39 @@ function setAudioEnabled(next: boolean): void {
 function resetRunPath(): void {
   runPath.length = 0;
   runPath.push({ x: sys.game.dist.x, score: 0 });
+}
+
+function resetMinimapHazardSamples(): void {
+  minimapHazardSamples.length = 0;
+  minimapHazardSampleScoreBin = -1;
+}
+
+function recordMinimapHazardSamples(force = false): void {
+  if (scene !== "playing" && !force) {
+    return;
+  }
+
+  const scoreBin = Math.floor(Math.max(0, currentScore) / MINIMAP_HAZARD_SAMPLE_SCORE_STEP);
+  if (!force && scoreBin <= minimapHazardSampleScoreBin) {
+    return;
+  }
+  minimapHazardSampleScoreBin = scoreBin;
+
+  const sampleScore = Math.max(0, currentScore);
+  for (const entity of world.all) {
+    if (entity.sleep || !entity.hazard || !entity.solid) {
+      continue;
+    }
+    minimapHazardSamples.push({
+      x: entity.x + entity.w * 0.5,
+      score: sampleScore,
+      radius: clamp(Math.max(entity.w, entity.h) * 0.5, 24, 220),
+    });
+  }
+
+  if (minimapHazardSamples.length > MINIMAP_HAZARD_MAX_SAMPLES) {
+    minimapHazardSamples.splice(0, minimapHazardSamples.length - MINIMAP_HAZARD_MAX_SAMPLES);
+  }
 }
 
 function recordRunPathPoint(force = false): void {
@@ -1414,7 +1562,37 @@ function drawRunPathMinimap(): void {
   const toMapX = (value: number): number => plotX + ((value - xMin) / xRange) * plotW;
   const toMapY = (value: number): number => plotY + (clamp(value, 0, MINIMAP_SCORE_MAX) / MINIMAP_SCORE_MAX) * plotH;
 
-  ctx2d.strokeStyle = "rgba(235,245,255,0.95)";
+  const aiPath = buildAIMinimapPath(runPath);
+  if (aiPath.length > 1) {
+    ctx2d.strokeStyle = MINIMAP_AI_ROUTE_COLOR;
+    ctx2d.lineWidth = 3;
+    ctx2d.lineJoin = "round";
+    ctx2d.lineCap = "round";
+    ctx2d.setLineDash([12, 8]);
+    ctx2d.beginPath();
+    for (let i = 0; i < aiPath.length; i += 1) {
+      const point = aiPath[i];
+      const px = toMapX(point.x);
+      const py = toMapY(point.score);
+      if (i === 0) {
+        ctx2d.moveTo(px, py);
+      } else {
+        ctx2d.lineTo(px, py);
+      }
+    }
+    ctx2d.stroke();
+    ctx2d.setLineDash([]);
+
+    const aiEnd = aiPath[aiPath.length - 1];
+    if (aiEnd) {
+      ctx2d.fillStyle = MINIMAP_AI_ROUTE_COLOR;
+      ctx2d.beginPath();
+      ctx2d.arc(toMapX(aiEnd.x), toMapY(aiEnd.score), 6, 0, Math.PI * 2);
+      ctx2d.fill();
+    }
+  }
+
+  ctx2d.strokeStyle = MINIMAP_PLAYER_ROUTE_COLOR;
   ctx2d.lineWidth = 4;
   ctx2d.lineJoin = "round";
   ctx2d.lineCap = "round";
@@ -1445,6 +1623,228 @@ function drawRunPathMinimap(): void {
   ctx2d.arc(toMapX(end.x), toMapY(end.score), 7, 0, Math.PI * 2);
   ctx2d.fill();
   ctx2d.stroke();
+
+  ctx2d.font = "26px \"BitPotion\", sans-serif";
+  ctx2d.textAlign = "left";
+  ctx2d.textBaseline = "bottom";
+  const legendY = plotY + plotH - 10;
+  const playerLabel = "PLAYER ROUTE";
+  const aiLabel = "AI ROUTE";
+  const legendGap = 24;
+  const aiLabelW = ctx2d.measureText(aiLabel).width;
+  const playerLabelW = ctx2d.measureText(playerLabel).width;
+  const aiLabelX = plotX + plotW - 12 - aiLabelW;
+  const playerLabelX = aiLabelX - legendGap - playerLabelW;
+  ctx2d.fillStyle = MINIMAP_PLAYER_ROUTE_COLOR;
+  ctx2d.fillText(playerLabel, playerLabelX, legendY);
+  ctx2d.fillStyle = MINIMAP_AI_ROUTE_COLOR;
+  ctx2d.fillText(aiLabel, aiLabelX, legendY);
+}
+
+function buildAIMinimapPath(source: PathPoint[]): PathPoint[] {
+  if (source.length === 0) {
+    return [];
+  }
+
+  const ordered = [...source].sort((a, b) => a.score - b.score);
+  const first = ordered[0];
+  if (!first) {
+    return [];
+  }
+
+  let minX = first.x;
+  let maxX = first.x;
+  for (const point of ordered) {
+    minX = Math.min(minX, point.x);
+    maxX = Math.max(maxX, point.x);
+  }
+  const xSpan = Math.max(120, maxX - minX);
+  const xPad = Math.max(24, xSpan * 0.12);
+  const xMin = minX - xPad;
+  const xMax = maxX + xPad;
+  const xRange = Math.max(1, xMax - xMin);
+  const centerX = (minX + maxX) * 0.5;
+  const targetScore = MINIMAP_SCORE_MAX;
+  const last = ordered[ordered.length - 1] ?? first;
+  const crashScore = clamp(last.score, 0, MINIMAP_SCORE_MAX);
+  const crashX = last.x;
+  const avoidDir = crashX >= centerX ? -1 : 1;
+  const virtualHazards = buildMinimapVirtualHazards(ordered, xMin, xMax);
+  const hazardBuckets = buildMinimapHazardBucketMap([...minimapHazardSamples, ...virtualHazards]);
+  const path: PathPoint[] = [{ x: clamp(first.x, xMin, xMax), score: 0 }];
+  let aiX = clamp(first.x, xMin, xMax);
+
+  for (let score = MINIMAP_AI_SCORE_STEP; score <= targetScore; score += MINIMAP_AI_SCORE_STEP) {
+    const s = Math.min(score, targetScore);
+    const progress = clamp(s / targetScore, 0, 1);
+    const centerPull = MINIMAP_AI_CENTER_PULL_MIN + (MINIMAP_AI_CENTER_PULL_MAX - MINIMAP_AI_CENTER_PULL_MIN) * progress;
+    const crashAvoid = clamp(
+      (s - (crashScore - MINIMAP_AI_CRASH_AVOID_OFFSET)) / MINIMAP_AI_CRASH_AVOID_SCORE_WINDOW,
+      0,
+      1
+    );
+    const sampledPlayerX = samplePathXByScore(ordered, s);
+    const hazardPush = getMinimapHazardAvoidOffset(hazardBuckets, s, aiX);
+    const desiredX =
+      sampledPlayerX * (1 - centerPull) +
+      centerX * centerPull +
+      avoidDir * crashAvoid * xRange * MINIMAP_AI_CRASH_AVOID_X_RATIO +
+      hazardPush;
+    const maxStep = xRange * MINIMAP_AI_X_STEP_RATIO;
+    aiX = clamp(aiX + clamp(desiredX - aiX, -maxStep, maxStep), xMin, xMax);
+    path.push({ x: aiX, score: s });
+  }
+
+  const tail = path[path.length - 1];
+  if (!tail || tail.score < targetScore) {
+    path.push({ x: aiX, score: targetScore });
+  }
+
+  return path;
+}
+
+function buildMinimapVirtualHazards(path: PathPoint[], xMin: number, xMax: number): MinimapHazardSample[] {
+  const last = path[path.length - 1];
+  if (!last) {
+    return [];
+  }
+
+  const startScore = Math.max(0, last.score + MINIMAP_AI_VIRTUAL_HAZARD_SCORE_STEP);
+  const endScore = Math.min(MINIMAP_SCORE_MAX, last.score + MINIMAP_AI_VIRTUAL_HAZARD_AHEAD);
+  if (startScore > endScore) {
+    return [];
+  }
+
+  const recentWindowStart = Math.max(0, last.score - 420);
+  let recentCount = 0;
+  for (const sample of minimapHazardSamples) {
+    if (sample.score >= recentWindowStart && sample.score <= last.score + MINIMAP_HAZARD_SAMPLE_SCORE_STEP) {
+      recentCount += 1;
+    }
+  }
+  const densityBias = clamp(recentCount / 18, 0, 1.2);
+  const laneCount = MINIMAP_AI_VIRTUAL_HAZARD_LANES;
+  const laneSpan = Math.max(1, laneCount - 1);
+  const laneWidth = (xMax - xMin) / laneSpan;
+  const virtuals: MinimapHazardSample[] = [];
+
+  for (let score = startScore; score <= endScore; score += MINIMAP_AI_VIRTUAL_HAZARD_SCORE_STEP) {
+    const baseCount =
+      MINIMAP_AI_VIRTUAL_HAZARD_MIN_PER_STEP +
+      Math.floor(
+        seededNoise(score * 0.017 + 41.7) *
+          (MINIMAP_AI_VIRTUAL_HAZARD_MAX_PER_STEP - MINIMAP_AI_VIRTUAL_HAZARD_MIN_PER_STEP + 1)
+      );
+    const count = clamp(Math.round(baseCount + densityBias * 0.7), 1, MINIMAP_AI_VIRTUAL_HAZARD_MAX_PER_STEP);
+    const usedLanes = new Set<number>();
+
+    for (let i = 0; i < count; i += 1) {
+      let lane = 0;
+      let attempts = 0;
+      while (attempts < 10) {
+        lane = Math.floor(seededNoise(score * 0.073 + i * 17.31 + attempts * 3.1) * laneCount);
+        if (!usedLanes.has(lane)) {
+          break;
+        }
+        attempts += 1;
+      }
+      usedLanes.add(lane);
+
+      const laneX = xMin + laneWidth * lane;
+      const jitter = (seededNoise(score * 0.121 + lane * 11.3 + i * 5.7) - 0.5) * laneWidth * 0.42;
+      const hazardX = clamp(laneX + jitter, xMin, xMax);
+      const radius = clamp(laneWidth * (0.42 + seededNoise(score * 0.097 + lane * 4.9) * 0.36), 20, 92);
+      virtuals.push({ x: hazardX, score, radius });
+    }
+  }
+
+  return virtuals;
+}
+
+function buildMinimapHazardBucketMap(samples: MinimapHazardSample[]): Map<number, MinimapHazardSample[]> {
+  const buckets = new Map<number, MinimapHazardSample[]>();
+  for (const sample of samples) {
+    const bucketKey = Math.floor(sample.score / MINIMAP_AI_HAZARD_WINDOW);
+    const list = buckets.get(bucketKey);
+    if (list) {
+      list.push(sample);
+    } else {
+      buckets.set(bucketKey, [sample]);
+    }
+  }
+  return buckets;
+}
+
+function getMinimapHazardAvoidOffset(
+  buckets: Map<number, MinimapHazardSample[]>,
+  score: number,
+  x: number
+): number {
+  const bucketKey = Math.floor(score / MINIMAP_AI_HAZARD_WINDOW);
+  let offset = 0;
+
+  for (let key = bucketKey - 1; key <= bucketKey + 1; key += 1) {
+    const list = buckets.get(key);
+    if (!list) {
+      continue;
+    }
+    for (const hazard of list) {
+      const scoreDelta = Math.abs(hazard.score - score);
+      if (scoreDelta > MINIMAP_AI_HAZARD_WINDOW) {
+        continue;
+      }
+
+      const influenceRadius = hazard.radius + MINIMAP_AI_HAZARD_RADIUS_PAD;
+      const dx = x - hazard.x;
+      const absDx = Math.abs(dx);
+      if (absDx >= influenceRadius) {
+        continue;
+      }
+
+      const scoreWeight = 1 - scoreDelta / MINIMAP_AI_HAZARD_WINDOW;
+      const proximity = 1 - absDx / influenceRadius;
+      const dir =
+        dx === 0 ? (seededNoise(score * 0.137 + hazard.x * 0.01) > 0.5 ? 1 : -1) : Math.sign(dx);
+      offset += dir * proximity * scoreWeight * hazard.radius * MINIMAP_AI_HAZARD_REPULSION;
+    }
+  }
+
+  return offset;
+}
+
+function seededNoise(seed: number): number {
+  const n = Math.sin(seed * 12.9898 + 78.233) * 43758.5453;
+  return n - Math.floor(n);
+}
+
+function samplePathXByScore(path: PathPoint[], score: number): number {
+  const first = path[0];
+  const last = path[path.length - 1];
+  if (!first || !last) {
+    return 0;
+  }
+
+  if (score <= first.score) {
+    return first.x;
+  }
+  if (score >= last.score) {
+    return last.x;
+  }
+
+  for (let i = 1; i < path.length; i += 1) {
+    const prev = path[i - 1];
+    const next = path[i];
+    if (!prev || !next) {
+      continue;
+    }
+    if (score <= next.score) {
+      const span = Math.max(1, next.score - prev.score);
+      const t = clamp((score - prev.score) / span, 0, 1);
+      return prev.x + (next.x - prev.x) * t;
+    }
+  }
+
+  return last.x;
 }
 
 function updateHUD(): void {
@@ -1525,12 +1925,38 @@ function wireButtons(): void {
   overlayPrompt.addEventListener("click", () => {
     registerAudioInteraction();
     if (scene === "menu") {
-      pendingStart = true;
+      if (menuOverlayMode === "main") {
+        pendingStart = true;
+      }
     } else if (scene === "paused") {
       pendingPauseToggle = true;
     } else if (scene === "gameover" || scene === "win") {
       pendingRestart = true;
     }
+  });
+
+  overlayDifficultyEasy.addEventListener("click", () => {
+    registerAudioInteraction();
+    if (scene !== "menu" || menuOverlayMode !== "difficulty") {
+      return;
+    }
+    pendingDifficultyStart = "easy";
+  });
+
+  overlayDifficultyNormal.addEventListener("click", () => {
+    registerAudioInteraction();
+    if (scene !== "menu" || menuOverlayMode !== "difficulty") {
+      return;
+    }
+    pendingDifficultyStart = "normal";
+  });
+
+  overlayDifficultyHard.addEventListener("click", () => {
+    registerAudioInteraction();
+    if (scene !== "menu" || menuOverlayMode !== "difficulty") {
+      return;
+    }
+    pendingDifficultyStart = "hard";
   });
 
   overlayHowToPlay.addEventListener("click", () => {
@@ -1671,7 +2097,9 @@ function wireInput(): void {
         return;
       }
       if (scene === "menu") {
-        pendingStart = true;
+        if (menuOverlayMode === "main") {
+          pendingStart = true;
+        }
       } else if (scene === "playing" || scene === "paused") {
         pendingPauseToggle = true;
       } else if (scene === "gameover" || scene === "win") {
@@ -1899,9 +2327,11 @@ function getPhase(unit: number): PhaseConfig {
 }
 
 function applySpawnerPhase(phase: PhaseConfig): void {
-  spawner.row.inc = Math.max(220, Math.round(spawnBase.row * phase.rowMul)) / OBSTACLE_SPAWN_MULTIPLIER;
-  spawner.enemy.inc = Math.max(280, Math.round(spawnBase.enemy * phase.enemyMul));
-  spawner.npc.inc = Math.max(60, Math.round(spawnBase.npc * phase.npcMul));
+  const difficulty = DIFFICULTY_CONFIGS[runDifficulty];
+  spawner.row.inc =
+    Math.max(220, Math.round(spawnBase.row * phase.rowMul * difficulty.spawnMul)) / OBSTACLE_SPAWN_MULTIPLIER;
+  spawner.enemy.inc = Math.max(280, Math.round(spawnBase.enemy * phase.enemyMul * difficulty.spawnMul));
+  spawner.npc.inc = Math.max(60, Math.round(spawnBase.npc * phase.npcMul * difficulty.spawnMul));
 }
 
 function getStratumSpeedMultiplier(level: number): number {
@@ -1910,14 +2340,15 @@ function getStratumSpeedMultiplier(level: number): number {
 }
 
 function getActiveSpeedMultiplier(): number {
+  const difficulty = DIFFICULTY_CONFIGS[runDifficulty];
   const baseMul = getStratumSpeedMultiplier(activeStratumLevel);
   if (!stratumTransition.active) {
-    return baseMul;
+    return baseMul * difficulty.speedMul;
   }
   const fromMul = getStratumSpeedMultiplier(stratumTransition.from);
   const toMul = getStratumSpeedMultiplier(stratumTransition.to);
   const t = easeOutCubic(stratumTransition.progress);
-  return fromMul * (1 - t) + toMul * t;
+  return (fromMul * (1 - t) + toMul * t) * difficulty.speedMul;
 }
 
 function updateWorldSpeed(dt: number, phase: PhaseConfig): void {

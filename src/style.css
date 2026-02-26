@@ -176,7 +176,7 @@ body {
 }
 
 .overlay-title.is-animated .title-letter {
-  animation: title-drill-drop 720ms cubic-bezier(0.17, 0.89, 0.31, 1.22) both;
+  animation: title-drill-drop 10s cubic-bezier(0.17, 0.89, 0.31, 1.22) infinite both;
 }
 
 .overlay-button {
@@ -191,6 +191,10 @@ body {
   padding: 10px 18px;
   min-width: 220px;
   cursor: pointer;
+}
+
+.overlay-button.hidden {
+  display: none;
 }
 
 .overlay-button:hover {
@@ -220,8 +224,36 @@ body {
   margin-top: 16px;
 }
 
+.overlay-difficulty {
+  margin-top: 0;
+}
+
 .overlay-actions.hidden {
   display: none;
+}
+
+.game-root.menu-ui .overlay-difficulty .overlay-button.difficulty-easy {
+  color: #51ff67;
+}
+
+.game-root.menu-ui .overlay-difficulty .overlay-button.difficulty-normal {
+  color: #ffbf4d;
+}
+
+.game-root.menu-ui .overlay-difficulty .overlay-button.difficulty-hard {
+  color: #ff4343;
+}
+
+.game-root.menu-ui .overlay-difficulty .overlay-button.difficulty-easy:hover {
+  color: #72ff84;
+}
+
+.game-root.menu-ui .overlay-difficulty .overlay-button.difficulty-normal:hover {
+  color: #ffd074;
+}
+
+.game-root.menu-ui .overlay-difficulty .overlay-button.difficulty-hard:hover {
+  color: #ff6767;
 }
 
 .overlay-message {
@@ -304,20 +336,25 @@ body {
     filter: blur(2px);
   }
 
-  26% {
+  2.6% {
     transform: translateY(-14px) translateX(-2px);
   }
 
-  42% {
+  4.2% {
     transform: translateY(7px) translateX(3px);
   }
 
-  58% {
+  5.8% {
     transform: translateY(-5px) translateX(-3px);
   }
 
-  74% {
+  7.4% {
     transform: translateY(2px) translateX(2px);
+  }
+
+  10% {
+    transform: translateY(0) translateX(0);
+    filter: blur(0);
   }
 
   100% {
