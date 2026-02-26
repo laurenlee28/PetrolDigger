@@ -24,6 +24,7 @@ import introCloud8Url from "./assets/intro-bg/cloud8.png";
 import introThemeUrl from "./assets/audio/IntroTheme.mp3";
 import failThemeUrl from "./assets/audio/FailTheme.mp3";
 import winThemeUrl from "./assets/audio/WinTheme.mp3";
+import explosionSfxUrl from "./assets/audio/explosion.mp3";
 
 type SceneState = "menu" | "playing" | "paused" | "gameover" | "win";
 type Group = "top" | "btm" | "npc" | "enemy";
@@ -523,6 +524,7 @@ const MINIMAP_PLAYER_ROUTE_COLOR = "rgba(235,245,255,0.95)";
 const MENU_BUTTON_FONT_PX = 48;
 const AUDIO_LABEL_ON = "Audio: ON";
 const AUDIO_LABEL_OFF = "Audio: OFF";
+const EXPLOSION_SFX_POOL_SIZE = 4;
 const WIN_TARGET_SCORE = 5000;
 const SCORE_SCALE = 3.75;
 const DIFFICULTY_CONFIGS: Record<GameDifficulty, DifficultyConfig> = {
@@ -686,6 +688,13 @@ failThemeAudio.preload = "auto";
 const winThemeAudio = new Audio(winThemeUrl);
 winThemeAudio.loop = true;
 winThemeAudio.preload = "auto";
+const explosionAudioPool = Array.from({ length: EXPLOSION_SFX_POOL_SIZE }, () => {
+  const track = new Audio(explosionSfxUrl);
+  track.preload = "auto";
+  track.volume = 0.8;
+  return track;
+});
+let explosionAudioIndex = 0;
 const gameplayTextureImages: Record<StratumTexture, HTMLImageElement> = {
   mine: new Image(),
   rubble: new Image(),
@@ -1432,9 +1441,26 @@ function pauseAllSceneAudio(): void {
   pauseAudio(winThemeAudio);
 }
 
+function pauseAllSfxAudio(): void {
+  for (const track of explosionAudioPool) {
+    pauseAudio(track);
+  }
+}
+
+function playExplosionSfx(): void {
+  if (!audioEnabled || !audioInteracted || explosionAudioPool.length === 0) {
+    return;
+  }
+  const track = explosionAudioPool[explosionAudioIndex] ?? explosionAudioPool[0];
+  explosionAudioIndex = (explosionAudioIndex + 1) % explosionAudioPool.length;
+  track.currentTime = 0;
+  safePlayAudio(track);
+}
+
 function syncSceneAudio(): void {
   if (!audioEnabled || !audioInteracted) {
     pauseAllSceneAudio();
+    pauseAllSfxAudio();
     return;
   }
 
@@ -1473,6 +1499,7 @@ function setAudioEnabled(next: boolean): void {
   audioEnabled = next;
   if (!audioEnabled) {
     pauseAllSceneAudio();
+    pauseAllSfxAudio();
   } else {
     registerAudioInteraction();
   }
@@ -3556,6 +3583,7 @@ function spawnExplosionFx(x: number, y: number, scale = 1): void {
   if (fx.explosions.length > FX_EXPLOSION_MAX) {
     fx.explosions.splice(0, fx.explosions.length - FX_EXPLOSION_MAX);
   }
+  playExplosionSfx();
 }
 
 function getExplosionFrameIndex(age: number): number {
