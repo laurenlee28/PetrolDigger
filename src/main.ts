@@ -2,13 +2,11 @@
 import playerSpriteSheetUrl from "./assets/drill.png";
 import gameplayBgMineUrl from "./assets/gameplay-bg-mine.png";
 import gameplayBgRubbleUrl from "./assets/gameplay-bg-rubble.png";
-import enemySpriteSheetUrl from "./assets/enemy.png";
-import wolfSpriteSheetUrl from "./assets/wolf.png";
+import bossSpriteSheetUrl from "./assets/boss.png";
 import rocksSpriteSheetUrl from "./assets/rocks.png";
 import objectsSpriteSheetUrl from "./assets/objects.png";
 import graveSpriteSheetUrl from "./assets/grave.png";
 import terrainSpriteSheetUrl from "./assets/terrain.png";
-import fireSpriteSheetUrl from "./assets/fire.png";
 import oreSpriteSheetUrl from "./assets/ore.png";
 import introBackground1Url from "./assets/intro-bg/background1.png";
 import introBackground2Url from "./assets/intro-bg/background2.png";
@@ -25,13 +23,15 @@ import introThemeUrl from "./assets/audio/IntroTheme.mp3";
 import failThemeUrl from "./assets/audio/FailTheme.mp3";
 import winThemeUrl from "./assets/audio/WinTheme.mp3";
 import explosionSfxUrl from "./assets/audio/explosion.mp3";
+import boostSfxUrl from "./assets/audio/boost.mp3";
+import itemSfxUrl from "./assets/audio/item.mp3";
 
 type SceneState = "menu" | "playing" | "paused" | "gameover" | "win";
-type Group = "top" | "btm" | "npc" | "enemy";
+type Group = "top" | "btm" | "npc";
 type CollectibleType = "none" | "life" | "boost";
 type SpawnType =
   | "npc"
-  | "enemy"
+  | "boss"
   | "rock"
   | "snag"
   | "ramp"
@@ -55,11 +55,9 @@ type PlayerPose =
 type ClusterEntry = [number, number, string?];
 type ClusterDefinition = Partial<Record<SpawnType, ClusterEntry[]>>;
 type ClusterLibrary = Record<string, Record<string, ClusterDefinition>>;
-type EnemyFrameKey = "enemy1" | "enemy2" | "enemy3" | "enemy4" | "enemy5" | "enemy6" | "enemy7";
 type RockFrameKey = "rock1" | "rock2" | "rock3" | "rock4" | "rock5" | "rock6";
 type SnugFrameKey = "snug1" | "snug2" | "snug3" | "snug4";
 type BoostFrameKey = "boost1" | "boost2" | "boost3" | "boost4";
-type WolfEncounterPhase = "inactive" | "rise" | "return";
 
 interface Vec2 {
   x: number;
@@ -150,7 +148,6 @@ interface PhaseConfig {
   name: PhaseName;
   speedMul: number;
   rowMul: number;
-  enemyMul: number;
   npcMul: number;
 }
 
@@ -158,42 +155,6 @@ interface DifficultyConfig {
   label: string;
   speedMul: number;
   spawnMul: number;
-}
-
-interface EnemyChaseState {
-  mode: "chase" | "orbit_entry" | "orbit";
-  angle: number;
-  dist: number;
-  timerDir: number;
-  speedRaw: number;
-  speedCurrent: number;
-  speedMax: number;
-  accel: number;
-  crashTimer: number;
-  objectsHit: Set<number>;
-  time: number;
-  orbitTime: number;
-  orbitDuration: number;
-  orbitRadiusX: number;
-  orbitRadiusY: number;
-  orbitOmega: number;
-  orbitPhase: number;
-  orbitEntryTime: number;
-  orbitEntryDuration: number;
-  orbitEntryVx: number;
-  orbitEntryVy: number;
-  burnTimer: number;
-}
-
-interface FireEntity {
-  id: number;
-  enemyId: number;
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-  age: number;
-  sleep: boolean;
 }
 
 interface EntitySheetMeta {
@@ -307,25 +268,10 @@ const BOOST_ANIMATION_FPS = 10;
 const PLAYER_FRAMES: ReadonlyArray<{ x: number; y: number; w: number; h: number }> = [
   { x: 421, y: 197, w: 48, h: 47 },
 ];
-const ENEMY_FRAMES: Record<EnemyFrameKey, EnemyFrameRect> = {
-  enemy1: { x: 181, y: 9, w: 45, h: 73 },
-  enemy2: { x: 164, y: 244, w: 72, h: 78 },
-  enemy3: { x: 6, y: 349, w: 60, h: 63 },
-  enemy4: { x: 97, y: 349, w: 44, h: 65 },
-  enemy5: { x: 97, y: 158, w: 44, h: 79 },
-  enemy6: { x: 184, y: 348, w: 32, h: 65 },
-  enemy7: { x: 94, y: 19, w: 44, h: 76 },
-};
-const ENEMY_FRAME_KEYS: EnemyFrameKey[] = [
-  "enemy1",
-  "enemy2",
-  "enemy3",
-  "enemy4",
-  "enemy5",
-  "enemy6",
-  "enemy7",
-];
-const WOLF_FRAME: EnemyFrameRect = { x: 9, y: 51, w: 238, h: 155 };
+const BOSS_FRAME: EnemyFrameRect = { x: 2926, y: 610, w: 105, h: 15 };
+const BOSS_SCALE = 7;
+const BOSS_DRAW_W = BOSS_FRAME.w * BOSS_SCALE;
+const BOSS_DRAW_H = BOSS_FRAME.h * BOSS_SCALE;
 const ROCK_FRAMES: Record<RockFrameKey, EnemyFrameRect> = {
   rock1: { x: 3, y: 585, w: 56, h: 53 },
   rock2: { x: 67, y: 582, w: 56, h: 56 },
@@ -351,17 +297,6 @@ const BOOST_FRAMES: Record<BoostFrameKey, EnemyFrameRect> = {
 const BOOST_FRAME_KEYS: BoostFrameKey[] = ["boost1", "boost2", "boost3", "boost4"];
 const LURE_FRAME: EnemyFrameRect = { x: 2, y: 1, w: 60, h: 94 };
 const RAMP_FRAME: EnemyFrameRect = { x: 489, y: 70, w: 81, h: 79 };
-const FIRE_FRAMES: ReadonlyArray<EnemyFrameRect> = [
-  { x: 18, y: 13, w: 27, h: 48 },
-  { x: 82, y: 13, w: 27, h: 48 },
-  { x: 145, y: 12, w: 28, h: 48 },
-  { x: 209, y: 11, w: 27, h: 49 },
-  { x: 273, y: 11, w: 27, h: 49 },
-  { x: 337, y: 11, w: 27, h: 49 },
-  { x: 401, y: 9, w: 26, h: 50 },
-  { x: 465, y: 9, w: 26, h: 50 },
-  { x: 530, y: 9, w: 25, h: 50 },
-];
 const EXPLOSION_FRAMES: ReadonlyArray<EnemyFrameRect> = [
   { x: 245, y: 262, w: 40, h: 36 },
   { x: 288, y: 259, w: 47, h: 42 },
@@ -383,16 +318,7 @@ const INTRO_BG_REVEAL_DURATION = 1.3;
 const CAMERA_HIT_SHAKE_DURATION = 0.2;
 const CAMERA_HIT_SHAKE_STRENGTH = 20;
 const CAMERA_SHAKE_DRAW_PAD = 48;
-const WOLF_EVENT_TRIGGER_SCORE = 4000;
-const WOLF_EVENT_RISE_DURATION = 3.0;
-const WOLF_EVENT_RETURN_DURATION = 1.2;
-const WOLF_EVENT_SPAWN_MARGIN = 28;
-const WOLF_EVENT_CAMERA_TOP_PADDING = 8;
-const WOLF_EVENT_SHAKE_MIN_AMPLITUDE = 6;
-const WOLF_EVENT_SHAKE_MAX_AMPLITUDE = 28;
-const WOLF_EVENT_SHAKE_FREQUENCY = 7.5;
-const WOLF_EVENT_BLINK_FREQUENCY = 11;
-const WOLF_EVENT_BLINK_VISIBLE_RATIO = 0.56;
+const BOSS_SPAWN_SCORE = 1700;
 const STRATUM_CONFIGS: ReadonlyArray<StratumConfig> = [
   {
     level: 1,
@@ -439,7 +365,6 @@ const WHITE = "#ffffff";
 const BLACK = "#000000";
 const STORAGE_KEY = "geoquest_stats_v1";
 const BASE_WORLD_SPEED = 150;
-const ENEMY_OBSTACLE_BLOCK_TIME = 1.0;
 const PLAYER_HIT_LOCK_TIME = 1.0;
 const PLAYER_INVINCIBLE_MOVE_TIME = 3.0;
 const BOOST_CRASH_HIT_STOP_MIN_TIME = 0.06;
@@ -454,23 +379,8 @@ const DOWN_DOUBLE_TAP_WINDOW = 0.28;
 const BOOST_DISTANCE_TRACKER = 2000;
 const BOOST_SPEED_MULTIPLIER = 2;
 const BOOST_TRAIL_INTERVAL = 0.08;
-const DANGER_FX_SCREEN_INTERVAL = 0.4;
-const DANGER_FX_NEAR_INTERVAL = 0.2;
-const ENEMY_ORBIT_DURATION = 0.8;
-const ENEMY_ORBIT_CENTER_Y_OFFSET = 80;
-const ENEMY_BEHIND_RESPAWN_Y = 200;
-const ENEMY_BURN_DURATION = 2.2;
-const FIRE_ANIMATION_FPS = 14;
-const FIRE_DRAW_W = 28;
-const FIRE_DRAW_H = 50;
 const GUARANTEED_BOOST_UNIT_INTERVAL = 50;
 const OBSTACLE_SPAWN_MULTIPLIER = 2;
-const ENEMY_ORBIT_RADIUS_X_MIN = 68;
-const ENEMY_ORBIT_RADIUS_X_MAX = 104;
-const ENEMY_ORBIT_RADIUS_Y_MIN = 44;
-const ENEMY_ORBIT_RADIUS_Y_MAX = 76;
-const ENEMY_ORBIT_ENTRY_MIN = 0.1;
-const ENEMY_ORBIT_ENTRY_MAX = 0.2;
 const FX_PICKUP_BURST = 6;
 const FX_HIT_BURST = 8;
 const FX_TRAIL_TTL = 0.5;
@@ -525,6 +435,7 @@ const MENU_BUTTON_FONT_PX = 48;
 const AUDIO_LABEL_ON = "Audio: ON";
 const AUDIO_LABEL_OFF = "Audio: OFF";
 const EXPLOSION_SFX_POOL_SIZE = 4;
+const ITEM_SFX_POOL_SIZE = 4;
 const WIN_TARGET_SCORE = 5000;
 const SCORE_SCALE = 3.75;
 const DIFFICULTY_CONFIGS: Record<GameDifficulty, DifficultyConfig> = {
@@ -535,15 +446,7 @@ const DIFFICULTY_CONFIGS: Record<GameDifficulty, DifficultyConfig> = {
 
 const ENTITY_SHEET_META: Record<SpawnType, EntitySheetMeta> = {
   npc: { w: 64, h: 64, str: "crash", group: "npc", hazard: false, collectible: "none", solid: false },
-  enemy: {
-    w: 72,
-    h: 79,
-    str: "crash",
-    group: "enemy",
-    hazard: true,
-    collectible: "none",
-    solid: true,
-  },
+  boss: { w: BOSS_DRAW_W, h: BOSS_DRAW_H, str: "crash", group: "top", hazard: true, collectible: "none", solid: true },
   rock: { w: 138, h: 142, str: "crash", group: "top", hazard: true, collectible: "none", solid: true },
   snag: { w: 123, h: 142, str: "crash", group: "top", hazard: true, collectible: "none", solid: true },
   ramp: { w: 81, h: 79, str: "boost", group: "top", hazard: true, collectible: "none", solid: true },
@@ -663,10 +566,8 @@ app.replaceChildren(root);
 const ctx = canvas.getContext("2d") as CanvasRenderingContext2D;
 const playerSpriteSheet = new Image();
 playerSpriteSheet.src = playerSpriteSheetUrl;
-const enemySpriteSheet = new Image();
-enemySpriteSheet.src = enemySpriteSheetUrl;
-const wolfSpriteSheet = new Image();
-wolfSpriteSheet.src = wolfSpriteSheetUrl;
+const bossSpriteSheet = new Image();
+bossSpriteSheet.src = bossSpriteSheetUrl;
 const rocksSpriteSheet = new Image();
 rocksSpriteSheet.src = rocksSpriteSheetUrl;
 const objectsSpriteSheet = new Image();
@@ -675,8 +576,6 @@ const graveSpriteSheet = new Image();
 graveSpriteSheet.src = graveSpriteSheetUrl;
 const terrainSpriteSheet = new Image();
 terrainSpriteSheet.src = terrainSpriteSheetUrl;
-const fireSpriteSheet = new Image();
-fireSpriteSheet.src = fireSpriteSheetUrl;
 const oreSpriteSheet = new Image();
 oreSpriteSheet.src = oreSpriteSheetUrl;
 const introThemeAudio = new Audio(introThemeUrl);
@@ -688,6 +587,10 @@ failThemeAudio.preload = "auto";
 const winThemeAudio = new Audio(winThemeUrl);
 winThemeAudio.loop = true;
 winThemeAudio.preload = "auto";
+const boostLoopAudio = new Audio(boostSfxUrl);
+boostLoopAudio.loop = true;
+boostLoopAudio.preload = "auto";
+boostLoopAudio.volume = 0.75;
 const explosionAudioPool = Array.from({ length: EXPLOSION_SFX_POOL_SIZE }, () => {
   const track = new Audio(explosionSfxUrl);
   track.preload = "auto";
@@ -695,6 +598,13 @@ const explosionAudioPool = Array.from({ length: EXPLOSION_SFX_POOL_SIZE }, () =>
   return track;
 });
 let explosionAudioIndex = 0;
+const itemAudioPool = Array.from({ length: ITEM_SFX_POOL_SIZE }, () => {
+  const track = new Audio(itemSfxUrl);
+  track.preload = "auto";
+  track.volume = 0.8;
+  return track;
+});
+let itemAudioIndex = 0;
 const gameplayTextureImages: Record<StratumTexture, HTMLImageElement> = {
   mine: new Image(),
   rubble: new Image(),
@@ -828,7 +738,6 @@ const world = {
   top: [] as Entity[],
   btm: [] as Entity[],
   npc: [] as Entity[],
-  enemy: [] as Entity[],
   sleeping: [] as Entity[],
   all: [] as Entity[],
 };
@@ -846,7 +755,6 @@ let worldSpeed = BASE_WORLD_SPEED;
 let currentScore = 0;
 let toastTimer = 0;
 let toastText = "";
-let dangerPulseCooldown = 0;
 let gameOverReason = "";
 let uiDirty = true;
 let playerPose: PlayerPose = "player_go";
@@ -861,6 +769,7 @@ let cameraShakeTimeLeft = 0;
 let cameraShakeDuration = 0;
 let cameraShakeStrength = 0;
 let hitStopTimer = 0;
+let bossSpawned = false;
 const boostCrashRecoil = {
   direction: { x: 0, y: -1 } as Vec2,
   speed: 0,
@@ -868,18 +777,9 @@ const boostCrashRecoil = {
   duration: BOOST_CRASH_RECOIL_DURATION,
 };
 const cameraShakeOffset: Vec2 = { x: 0, y: 0 };
-const cameraEventOffset: Vec2 = { x: 0, y: 0 };
 const runPath: PathPoint[] = [];
 const minimapHazardSamples: MinimapHazardSample[] = [];
 let minimapHazardSampleScoreBin = -1;
-const wolfEncounter = {
-  triggered: false,
-  active: false,
-  phase: "inactive" as WolfEncounterPhase,
-  timer: 0,
-  targetOffsetY: 0,
-  enemyId: 0,
-};
 const introClouds: IntroCloud[] = [];
 const introOreSprites: IntroOreSprite[] = [];
 let activeStratumLevel = 1;
@@ -905,14 +805,9 @@ const player: PlayerState = {
   movementLockTimer: 0,
   invincibleTimer: 0,
 };
-const enemyRuntime = new Map<number, EnemyChaseState>();
-const fireByEnemyId = new Map<number, FireEntity>();
-const fireEntities: FireEntity[] = [];
-let fireEntityId = 0;
 
 const spawner = {
   row: { next: 0, inc: 320 } as SpawnTimer,
-  enemy: { next: 1000, inc: 480 } as SpawnTimer,
   npc: { next: 30, inc: 90 } as SpawnTimer,
   boostGuaranteed: { next: GUARANTEED_BOOST_UNIT_INTERVAL, inc: GUARANTEED_BOOST_UNIT_INTERVAL } as SpawnTimer,
   checkpoint: { next: 260, inc: 400 } as SpawnTimer,
@@ -923,7 +818,6 @@ const spawner = {
 };
 const spawnBase = {
   row: 320,
-  enemy: 480,
   npc: 90,
 };
 
@@ -967,6 +861,7 @@ function consumeHitStop(dt: number): boolean {
 function updateScene(dt: number): void {
   const isHitStopActive = consumeHitStop(dt);
   updateCameraShake(isHitStopActive ? 0 : dt);
+  syncBoostLoopAudio();
   if (isHitStopActive) {
     updateHUD();
     return;
@@ -998,14 +893,6 @@ function updateScene(dt: number): void {
       resetRunState();
       setScene("menu");
     }
-    updateHUD();
-    return;
-  }
-
-  if (scene === "playing" && wolfEncounter.active) {
-    pendingPauseToggle = false;
-    updateWolfEncounter(dt);
-    toastTimer = Math.max(0, toastTimer - dt);
     updateHUD();
     return;
   }
@@ -1048,10 +935,10 @@ function updateScene(dt: number): void {
   };
   updateDistances(worldShift.x * 0.1, worldShift.y);
   updateBoostState(dt, worldShift);
+  syncBoostLoopAudio();
 
   updateSpawnLoop(phase);
   moveEntities(dt, effectiveWorldShift);
-  updateFireEntities(dt);
   updateCollisions();
   updateBoostCrashFlashFx(dt, effectiveWorldShift);
   updateFxSystem(dt, effectiveWorldShift);
@@ -1059,15 +946,9 @@ function updateScene(dt: number): void {
   mergeAll();
 
   currentScore = Math.floor(sys.game.dist.unit * SCORE_SCALE);
+  trySpawnBossAtScoreThreshold();
   recordMinimapHazardSamples();
   recordRunPathPoint();
-  if (!wolfEncounter.triggered && currentScore >= WOLF_EVENT_TRIGGER_SCORE) {
-    // Temporary OFF: camera move/wolf encounter sequence at 4000 score.
-    void startWolfEncounter;
-    // startWolfEncounter();
-    // updateHUD();
-    // return;
-  }
   updateStratumState(dt);
   toastTimer = Math.max(0, toastTimer - dt);
   updateHUD();
@@ -1157,8 +1038,6 @@ function updateGridAndSpawnBase(): void {
 function resetSpawnTimers(): void {
   spawner.row.next = 0;
   spawner.row.inc = spawnBase.row / OBSTACLE_SPAWN_MULTIPLIER;
-  spawner.enemy.next = 1000;
-  spawner.enemy.inc = spawnBase.enemy;
   spawner.npc.next = 30;
   spawner.npc.inc = spawnBase.npc;
   spawner.boostGuaranteed.next = GUARANTEED_BOOST_UNIT_INTERVAL;
@@ -1176,8 +1055,6 @@ function resetSpawnTimers(): void {
 }
 
 function resetRunState(): void {
-  clearWolfEncounterEntity();
-  resetWolfEncounterState();
   sys.game = createGameState();
   player.pos.x = session.x;
   player.pos.y = session.y;
@@ -1188,15 +1065,12 @@ function resetRunState(): void {
   playerDir = "down";
   playerAngle = (-90 * Math.PI) / 180;
   playerPose = "player_go";
-  enemyRuntime.clear();
-  fireByEnemyId.clear();
-  fireEntities.length = 0;
   worldSpeed = BASE_WORLD_SPEED;
   boostDistanceLeft = 0;
   boostTrailTick = 0;
   lastDownTapTime = -10;
+  bossSpawned = false;
   currentScore = 0;
-  dangerPulseCooldown = 0;
   gameOverReason = "";
   toastText = "";
   toastTimer = 0;
@@ -1221,7 +1095,6 @@ function resetRunState(): void {
   world.top = sleepAll(world.top);
   world.btm = sleepAll(world.btm);
   world.npc = sleepAll(world.npc);
-  world.enemy = sleepAll(world.enemy);
   world.all.length = 0;
   fx.particles.length = 0;
   fx.boostTrail.length = 0;
@@ -1237,7 +1110,7 @@ function startNewRun(): void {
   setScene("playing");
 }
 
-function finishRun(reason: "obstacle" | "enemy" | "win"): void {
+function finishRun(reason: "obstacle" | "win"): void {
   if (sys.game.finish) {
     return;
   }
@@ -1245,12 +1118,10 @@ function finishRun(reason: "obstacle" | "enemy" | "win"): void {
   recordMinimapHazardSamples(true);
   recordRunPathPoint(true);
   sys.game.finish = true;
-  sys.game.caught = reason === "enemy";
+  sys.game.caught = false;
   gameOverReason =
     reason === "win"
       ? "you have reached the target zone"
-      : reason === "enemy"
-      ? "enemy caught you"
       : "obstacle limit reached";
 
   if (currentScore > stats.highScore) {
@@ -1269,8 +1140,6 @@ function setScene(next: SceneState): void {
   scene = next;
   if (next !== "playing" && next !== "paused") {
     resetCameraShake();
-    clearWolfEncounterEntity();
-    resetWolfEncounterState();
   }
   if (next === "menu" && prev !== "menu") {
     resetIntroPresentation();
@@ -1442,8 +1311,15 @@ function pauseAllSceneAudio(): void {
 }
 
 function pauseAllSfxAudio(): void {
+  pauseAudio(boostLoopAudio);
+  boostLoopAudio.currentTime = 0;
   for (const track of explosionAudioPool) {
     pauseAudio(track);
+    track.currentTime = 0;
+  }
+  for (const track of itemAudioPool) {
+    pauseAudio(track);
+    track.currentTime = 0;
   }
 }
 
@@ -1457,6 +1333,31 @@ function playExplosionSfx(): void {
   safePlayAudio(track);
 }
 
+function playItemSfx(): void {
+  if (!audioEnabled || !audioInteracted || itemAudioPool.length === 0) {
+    return;
+  }
+  const track = itemAudioPool[itemAudioIndex] ?? itemAudioPool[0];
+  itemAudioIndex = (itemAudioIndex + 1) % itemAudioPool.length;
+  track.currentTime = 0;
+  safePlayAudio(track);
+}
+
+function syncBoostLoopAudio(): void {
+  const shouldPlay = audioEnabled && audioInteracted && scene === "playing" && isBoostActive();
+  if (shouldPlay) {
+    if (boostLoopAudio.paused) {
+      boostLoopAudio.currentTime = 0;
+      safePlayAudio(boostLoopAudio);
+    }
+    return;
+  }
+  if (!boostLoopAudio.paused) {
+    pauseAudio(boostLoopAudio);
+  }
+  boostLoopAudio.currentTime = 0;
+}
+
 function syncSceneAudio(): void {
   if (!audioEnabled || !audioInteracted) {
     pauseAllSceneAudio();
@@ -1468,6 +1369,7 @@ function syncSceneAudio(): void {
     pauseAudio(failThemeAudio);
     pauseAudio(winThemeAudio);
     safePlayAudio(introThemeAudio);
+    syncBoostLoopAudio();
     return;
   }
 
@@ -1475,6 +1377,7 @@ function syncSceneAudio(): void {
     pauseAudio(introThemeAudio);
     pauseAudio(winThemeAudio);
     safePlayAudio(failThemeAudio);
+    syncBoostLoopAudio();
     return;
   }
 
@@ -1482,10 +1385,12 @@ function syncSceneAudio(): void {
     pauseAudio(introThemeAudio);
     pauseAudio(failThemeAudio);
     safePlayAudio(winThemeAudio);
+    syncBoostLoopAudio();
     return;
   }
 
   pauseAllSceneAudio();
+  syncBoostLoopAudio();
 }
 
 function registerAudioInteraction(): void {
@@ -2361,7 +2266,6 @@ function tickTime(dt: number): void {
   sys.game.time.loop = dt;
   sys.game.time.elapsed += dt;
   sys.game.time.scale = 60 * dt * session.settings.gameSpeed;
-  dangerPulseCooldown = Math.max(0, dangerPulseCooldown - dt);
   if (player.movementLockTimer > 0) {
     player.movementLockTimer = Math.max(0, player.movementLockTimer - dt);
   } else if (player.invincibleTimer > 0) {
@@ -2374,7 +2278,7 @@ function isBoostActive(): boolean {
 }
 
 function tryUseBoost(): void {
-  if (scene !== "playing" || wolfEncounter.active || isBoostActive() || sys.game.boosts.current <= 0) {
+  if (scene !== "playing" || isBoostActive() || sys.game.boosts.current <= 0) {
     return;
   }
   sys.game.boosts.current -= 1;
@@ -2408,19 +2312,18 @@ function updateDistances(dx: number, dy: number): void {
 function getPhase(unit: number): PhaseConfig {
   const wave = unit % 320;
   if (wave < 120) {
-    return { name: "easy", speedMul: 0.92, rowMul: 1.08, enemyMul: 1.08, npcMul: 1.05 };
+    return { name: "easy", speedMul: 0.92, rowMul: 1.08, npcMul: 1.05 };
   }
   if (wave < 240) {
-    return { name: "hard", speedMul: 1.03, rowMul: 0.84, enemyMul: 0.84, npcMul: 0.9 };
+    return { name: "hard", speedMul: 1.03, rowMul: 0.84, npcMul: 0.9 };
   }
-  return { name: "recovery", speedMul: 0.96, rowMul: 1.16, enemyMul: 1.18, npcMul: 1.1 };
+  return { name: "recovery", speedMul: 0.96, rowMul: 1.16, npcMul: 1.1 };
 }
 
 function applySpawnerPhase(phase: PhaseConfig): void {
   const difficulty = DIFFICULTY_CONFIGS[runDifficulty];
   spawner.row.inc =
     Math.max(220, Math.round(spawnBase.row * phase.rowMul * difficulty.spawnMul)) / OBSTACLE_SPAWN_MULTIPLIER;
-  spawner.enemy.inc = Math.max(280, Math.round(spawnBase.enemy * phase.enemyMul * difficulty.spawnMul));
   spawner.npc.inc = Math.max(60, Math.round(spawnBase.npc * phase.npcMul * difficulty.spawnMul));
 }
 
@@ -2496,9 +2399,6 @@ function updateSpawnLoop(phase: PhaseConfig): void {
   }
   while (nextReady(spawner.boostGuaranteed, true)) {
     spawnGuaranteedBoost();
-  }
-  if (nextReady(spawner.enemy)) {
-    createEnemy();
   }
   if (nextReady(spawner.npc)) {
     createNpc();
@@ -2625,44 +2525,6 @@ function buildEndlessRandomSnags(
   }
 }
 
-function createEnemy(): boolean {
-  const x = (Math.random() / 2 + 0.25) * session.w;
-  const enemy = buildObjectWithSpacing("enemy", x, -32, "chase");
-  if (!enemy) {
-    return false;
-  }
-  initEnemyRuntime(enemy);
-  return true;
-}
-
-function initEnemyRuntime(enemy: Entity): void {
-  const playerSpeedRaw = clamp(worldSpeed / 24, 1, 7.5);
-  enemyRuntime.set(enemy.id, {
-    mode: "chase",
-    angle: 0,
-    dist: 0,
-    timerDir: 0,
-    speedRaw: playerSpeedRaw + 0.8,
-    speedCurrent: playerSpeedRaw + 0.8,
-    speedMax: 5.0,
-    accel: 0.01,
-    crashTimer: 0,
-    objectsHit: new Set<number>(),
-    time: Math.random(),
-    orbitTime: 0,
-    orbitDuration: ENEMY_ORBIT_DURATION,
-    orbitRadiusX: rand(ENEMY_ORBIT_RADIUS_X_MIN, ENEMY_ORBIT_RADIUS_X_MAX),
-    orbitRadiusY: rand(ENEMY_ORBIT_RADIUS_Y_MIN, ENEMY_ORBIT_RADIUS_Y_MAX),
-    orbitOmega: (2 * Math.PI) / ENEMY_ORBIT_DURATION,
-    orbitPhase: Math.random() * Math.PI * 2,
-    orbitEntryTime: 0,
-    orbitEntryDuration: ENEMY_ORBIT_ENTRY_MIN,
-    orbitEntryVx: 0,
-    orbitEntryVy: 0,
-    burnTimer: 0,
-  });
-}
-
 function createNpc(): void {
   const x = rand(Math.floor(session.w * 0.22), Math.floor(session.w * 0.78));
   const y = session.h + rand(80, 220);
@@ -2694,6 +2556,17 @@ function spawnGuaranteedBoost(): void {
   // Fallback so boost spawn is guaranteed every interval.
   const fallbackX = clamp(session.x, 40, session.w - 40);
   buildObject("boost", fallbackX, y, "boost");
+}
+
+function trySpawnBossAtScoreThreshold(): void {
+  if (scene !== "playing" || bossSpawned || currentScore < BOSS_SPAWN_SCORE) {
+    return;
+  }
+  const bossX = session.x - BOSS_DRAW_W * 0.5;
+  const bossY = session.h + Math.max(96, BOSS_DRAW_H * 0.5);
+  buildObject("boss", bossX, bossY, "boss");
+  bossSpawned = true;
+  mergeAll();
 }
 
 function buildCluster(libraryName: string, baseX: number, baseY: number, forced?: string): void {
@@ -2759,7 +2632,7 @@ function hasObjectCollision(type: SpawnType, x: number, y: number): boolean {
     h: meta.h,
   };
 
-  const existing = world.top.concat(world.btm).concat(world.npc).concat(world.enemy);
+  const existing = world.top.concat(world.btm).concat(world.npc);
   for (const entity of existing) {
     if (entity.sleep) {
       continue;
@@ -2784,8 +2657,8 @@ function buildObject(type: SpawnType, x: number, y: number, variant = ""): Entit
   object.sleep = false;
   object.stratumLevel = getStratumLevelByScore(currentScore);
   object.ttl = 999;
-  if (object.type === "enemy") {
-    applyEnemyFrameToEntity(object, variant);
+  if (object.type === "boss") {
+    applyBossFrameToEntity(object);
   } else if (object.type === "rock") {
     applyRockFrameToEntity(object);
   } else if (object.type === "snag") {
@@ -2807,9 +2680,6 @@ function buildObject(type: SpawnType, x: number, y: number, variant = ""): Entit
       break;
     case "npc":
       world.npc.push(object);
-      break;
-    case "enemy":
-      world.enemy.push(object);
       break;
   }
 
@@ -2870,36 +2740,20 @@ function groupByType(type: SpawnType): Group {
 }
 
 function getEntityLabel(type: EntityType): string {
-  if (type === "enemy") {
-    return "enemy";
+  if (type === "boss") {
+    return "boss";
   }
   return type;
 }
 
-function getEnemyFrameRect(frameKey: string): EnemyFrameRect {
-  if (frameKey === "wolf") {
-    return WOLF_FRAME;
-  }
-  const key = ENEMY_FRAME_KEYS.find((candidate) => candidate === frameKey);
-  if (key) {
-    return ENEMY_FRAMES[key];
-  }
-  return ENEMY_FRAMES.enemy1;
+function getBossFrameRect(): EnemyFrameRect {
+  return BOSS_FRAME;
 }
 
-function applyEnemyFrameToEntity(entity: Entity, preferredVariant = ""): void {
-  if (preferredVariant === "wolf") {
-    entity.variant = "wolf";
-    entity.w = WOLF_FRAME.w;
-    entity.h = WOLF_FRAME.h;
-    return;
-  }
-
-  const frameKey = randIndex(ENEMY_FRAME_KEYS);
-  const frame = ENEMY_FRAMES[frameKey];
-  entity.variant = frameKey;
-  entity.w = frame.w;
-  entity.h = frame.h;
+function applyBossFrameToEntity(entity: Entity): void {
+  entity.variant = "boss";
+  entity.w = BOSS_DRAW_W;
+  entity.h = BOSS_DRAW_H;
 }
 
 function getRockFrameRect(frameKey: string): EnemyFrameRect {
@@ -2975,7 +2829,7 @@ function createSleepingObjects(): void {
     lure: 3,
     boost: 2,
     life: 1,
-    enemy: 2,
+    boss: 1,
     npc: 10,
   };
 
@@ -2995,270 +2849,6 @@ function moveEntities(dt: number, worldShift: { x: number; y: number }): void {
       entity.x += entity.vx * dt - worldShift.x;
       entity.y += entity.vy * dt - worldShift.y;
     }
-  }
-
-  for (const enemy of world.enemy) {
-    updateEnemyChase(enemy, worldShift);
-  }
-}
-
-function updateEnemyChase(enemy: Entity, worldShift: { x: number; y: number }): void {
-  let state = enemyRuntime.get(enemy.id);
-  if (!state) {
-    initEnemyRuntime(enemy);
-    state = enemyRuntime.get(enemy.id);
-  }
-  if (!state) {
-    return;
-  }
-
-  enemy.x += -worldShift.x;
-  enemy.y += -worldShift.y;
-
-  if (enemy.sleep) {
-    return;
-  }
-
-  const frameDelta = sys.game.time.loop * sys.game.time.scale;
-  state.time += sys.game.time.loop;
-  if (state.burnTimer > 0) {
-    state.burnTimer = Math.max(0, state.burnTimer - sys.game.time.loop);
-    upsertFireEntity(enemy);
-    if (state.burnTimer <= 0) {
-      despawnBurnedEnemy(enemy);
-    }
-    return;
-  }
-
-  state.crashTimer = Math.max(0, state.crashTimer - frameDelta);
-  if (state.crashTimer > 0) {
-    return;
-  }
-
-  if (state.mode === "orbit_entry") {
-    updateEnemyOrbitEntry(enemy, state);
-    applyEnemyDangerFx(enemy, state);
-    return;
-  }
-
-  if (state.mode === "orbit") {
-    updateEnemyOrbit(enemy, state);
-    applyEnemyDangerFx(enemy, state);
-    return;
-  }
-
-  const dx = player.pos.x - enemy.x;
-  const dy = player.pos.y - enemy.y;
-  state.dist = Math.hypot(dx, dy);
-  state.timerDir -= frameDelta;
-
-  if (state.timerDir <= 0) {
-    state.timerDir += (rand(25, 100) / 100) * (state.dist / Math.max(1, session.y));
-    state.angle = Math.atan2(dy, dx);
-  }
-
-  const accel = state.accel * sys.game.time.scale;
-  const belowPlayer = enemy.y >= session.y;
-  if (state.speedRaw < state.speedMax && !belowPlayer) {
-    state.speedRaw += accel;
-  } else if (belowPlayer) {
-    state.speedRaw -= accel;
-  } else {
-    state.speedRaw = state.speedMax;
-  }
-  state.speedRaw = clamp(state.speedRaw, 1, state.speedMax);
-  state.speedCurrent = state.speedRaw * sys.game.time.scale;
-
-  const wave = (state.dist / Math.max(1, session.y)) * 15;
-  const wobble = (Math.cos(16 * state.time) * wave * Math.PI) / 180;
-  const vx = state.speedCurrent * Math.cos(state.angle + wobble);
-  const vy = state.speedCurrent * Math.sin(state.angle + wobble);
-  enemy.x += vx;
-  enemy.y += vy;
-
-  if (enemy.y > player.pos.y + 6) {
-    startEnemyOrbit(enemy, state, vx, vy);
-    applyEnemyDangerFx(enemy, state);
-    return;
-  }
-
-  const collidedObstacle = resolveEnemyObstacleCollision(enemy, state);
-  if (collidedObstacle) {
-    enemy.x -= vx;
-    enemy.y -= vy;
-    state.crashTimer = ENEMY_OBSTACLE_BLOCK_TIME;
-    state.speedRaw = 0;
-    state.speedCurrent = 0;
-    if (collidedObstacle.type === "ramp") {
-      igniteEnemy(enemy, state);
-    }
-  }
-
-  applyEnemyDangerFx(enemy, state);
-}
-
-function startEnemyOrbit(enemy: Entity, state: EnemyChaseState, vx: number, vy: number): void {
-  state.mode = "orbit_entry";
-  state.orbitTime = 0;
-  state.orbitDuration = ENEMY_ORBIT_DURATION;
-  state.orbitRadiusX = rand(ENEMY_ORBIT_RADIUS_X_MIN, ENEMY_ORBIT_RADIUS_X_MAX);
-  state.orbitRadiusY = rand(ENEMY_ORBIT_RADIUS_Y_MIN, ENEMY_ORBIT_RADIUS_Y_MAX);
-  state.orbitOmega = (2 * Math.PI) / state.orbitDuration;
-  state.orbitEntryTime = 0;
-  state.orbitEntryDuration =
-    ENEMY_ORBIT_ENTRY_MIN + (ENEMY_ORBIT_ENTRY_MAX - ENEMY_ORBIT_ENTRY_MIN) * Math.random();
-  state.orbitEntryVx = vx;
-  state.orbitEntryVy = vy;
-  const ex = enemy.x - player.pos.x;
-  const ey = enemy.y - (player.pos.y - ENEMY_ORBIT_CENTER_Y_OFFSET);
-  state.orbitPhase = Math.atan2(
-    ey / Math.max(1, state.orbitRadiusY),
-    ex / Math.max(1, state.orbitRadiusX)
-  );
-}
-
-function updateEnemyOrbitEntry(enemy: Entity, state: EnemyChaseState): void {
-  const dt = sys.game.time.loop;
-  state.orbitTime += dt * 0.6;
-  state.orbitEntryTime += dt;
-  const t = clamp(state.orbitEntryTime / Math.max(ENEMY_ORBIT_ENTRY_MIN, state.orbitEntryDuration), 0, 1);
-  const damp = 1 - t;
-  enemy.x += state.orbitEntryVx * damp;
-  enemy.y += state.orbitEntryVy * damp;
-
-  const angle = state.orbitPhase + state.orbitOmega * state.orbitTime;
-  const targetX = player.pos.x + state.orbitRadiusX * Math.cos(angle);
-  const targetY = player.pos.y + state.orbitRadiusY * Math.sin(angle) - ENEMY_ORBIT_CENTER_Y_OFFSET;
-  const blend = 0.24 + 0.56 * t;
-  enemy.x += (targetX - enemy.x) * blend;
-  enemy.y += (targetY - enemy.y) * blend;
-  state.dist = Math.hypot(player.pos.x - enemy.x, player.pos.y - enemy.y);
-
-  if (t >= 1) {
-    state.mode = "orbit";
-    state.orbitEntryVx = 0;
-    state.orbitEntryVy = 0;
-  }
-}
-
-function updateEnemyOrbit(enemy: Entity, state: EnemyChaseState): void {
-  state.orbitTime += sys.game.time.loop;
-  const angle = state.orbitPhase + state.orbitOmega * state.orbitTime;
-  enemy.x = player.pos.x + state.orbitRadiusX * Math.cos(angle);
-  enemy.y = player.pos.y + state.orbitRadiusY * Math.sin(angle) - ENEMY_ORBIT_CENTER_Y_OFFSET;
-  state.dist = Math.hypot(player.pos.x - enemy.x, player.pos.y - enemy.y);
-
-  if (state.orbitTime >= state.orbitDuration) {
-    enemy.x = player.pos.x + rand(-96, 96);
-    enemy.y = player.pos.y - ENEMY_BEHIND_RESPAWN_Y - rand(0, 72);
-    state.mode = "chase";
-    state.orbitTime = 0;
-    state.timerDir = 0;
-  }
-}
-
-function applyEnemyDangerFx(enemy: Entity, state: EnemyChaseState): void {
-  const inScreen =
-    enemy.x + enemy.w > 0 &&
-    enemy.x < session.w &&
-    enemy.y + enemy.h > 0 &&
-    enemy.y < session.h;
-  if (inScreen && dangerPulseCooldown <= 0) {
-    spawnDangerFx(player.pos.x, player.pos.y - 70);
-    dangerPulseCooldown = DANGER_FX_SCREEN_INTERVAL;
-  } else if (state.dist < 70 && dangerPulseCooldown <= 0) {
-    spawnDangerFx(player.pos.x, player.pos.y - 70);
-    dangerPulseCooldown = DANGER_FX_NEAR_INTERVAL;
-  }
-}
-
-function resolveEnemyObstacleCollision(enemy: Entity, state: EnemyChaseState): Entity | null {
-  const obstacles = world.top.concat(world.btm);
-  const enemyHitbox = toHitbox(enemy);
-  for (const obstacle of obstacles) {
-    if (obstacle.sleep || !obstacle.solid || !obstacle.hazard) {
-      continue;
-    }
-    if (obstacle.y < 16) {
-      continue;
-    }
-    if (state.objectsHit.has(obstacle.id)) {
-      continue;
-    }
-    if (intersects(enemyHitbox, toHitbox(obstacle))) {
-      state.objectsHit.add(obstacle.id);
-      return obstacle;
-    }
-  }
-  return null;
-}
-
-function igniteEnemy(enemy: Entity, state: EnemyChaseState): void {
-  if (state.burnTimer > 0) {
-    return;
-  }
-  state.burnTimer = ENEMY_BURN_DURATION;
-  upsertFireEntity(enemy);
-}
-
-function upsertFireEntity(enemy: Entity): FireEntity {
-  const existing = fireByEnemyId.get(enemy.id);
-  if (existing) {
-    existing.sleep = false;
-    syncFireEntityToEnemy(existing, enemy);
-    return existing;
-  }
-
-  const fire: FireEntity = {
-    id: fireEntityId += 1,
-    enemyId: enemy.id,
-    x: enemy.x,
-    y: enemy.y,
-    w: FIRE_DRAW_W,
-    h: FIRE_DRAW_H,
-    age: 0,
-    sleep: false,
-  };
-  syncFireEntityToEnemy(fire, enemy);
-  fireEntities.push(fire);
-  fireByEnemyId.set(enemy.id, fire);
-  return fire;
-}
-
-function syncFireEntityToEnemy(fire: FireEntity, enemy: Entity): void {
-  fire.x = enemy.x + enemy.w * 0.5 - fire.w * 0.5;
-  fire.y = enemy.y + enemy.h * 0.5 - fire.h * 0.62;
-}
-
-function updateFireEntities(dt: number): void {
-  for (const fire of fireEntities) {
-    if (fire.sleep) {
-      continue;
-    }
-
-    const enemy = world.enemy.find((entry) => entry.id === fire.enemyId && !entry.sleep);
-    const state = enemy ? enemyRuntime.get(enemy.id) : undefined;
-    if (!enemy || !state || state.burnTimer <= 0) {
-      fire.sleep = true;
-      fireByEnemyId.delete(fire.enemyId);
-      continue;
-    }
-
-    fire.age += dt;
-    syncFireEntityToEnemy(fire, enemy);
-  }
-  const live = fireEntities.filter((entry) => !entry.sleep);
-  fireEntities.length = 0;
-  fireEntities.push(...live);
-}
-
-function despawnBurnedEnemy(enemy: Entity): void {
-  enemy.sleep = true;
-  enemyRuntime.delete(enemy.id);
-  const fire = fireByEnemyId.get(enemy.id);
-  if (fire) {
-    fire.sleep = true;
-    fireByEnemyId.delete(enemy.id);
   }
 }
 
@@ -3313,15 +2903,6 @@ function onPlayerObstacleHit(): void {
 
 function removeEntityForBoostCrash(entity: Entity): void {
   entity.sleep = true;
-  if (entity.type !== "enemy") {
-    return;
-  }
-  enemyRuntime.delete(entity.id);
-  const fire = fireByEnemyId.get(entity.id);
-  if (fire) {
-    fire.sleep = true;
-    fireByEnemyId.delete(entity.id);
-  }
 }
 
 function getBoostBreakImpactRatio(entity: Entity): number {
@@ -3340,7 +2921,7 @@ function updateCollisions(): void {
     return;
   }
 
-  const groups = [world.top, world.btm, world.enemy, world.npc];
+  const groups = [world.top, world.btm, world.npc];
 
   for (const group of groups) {
     for (const entity of group) {
@@ -3357,6 +2938,7 @@ function updateCollisions(): void {
           sys.game.lives.current += 1;
           sys.game.lives.numCollected += 1;
           spawnPickupFx(entity.x, entity.y, "life");
+          playItemSfx();
         }
         entity.sleep = true;
         continue;
@@ -3367,6 +2949,7 @@ function updateCollisions(): void {
           sys.game.boosts.current += 1;
           sys.game.boosts.numCollected += 1;
           spawnPickupFx(entity.x, entity.y, "boost");
+          playItemSfx();
         }
         entity.sleep = true;
         continue;
@@ -3396,17 +2979,6 @@ function updateCollisions(): void {
       }
 
       if (entity.hazard && !isPlayerInvincible()) {
-        if (entity.type === "enemy") {
-          const state = enemyRuntime.get(entity.id);
-          if (state && state.burnTimer > 0) {
-            continue;
-          }
-        }
-        if (entity.type === "enemy") {
-          triggerCameraShake(CAMERA_HIT_SHAKE_STRENGTH, CAMERA_HIT_SHAKE_DURATION);
-          finishRun("enemy");
-          return;
-        }
         onPlayerObstacleHit();
         spawnHitFx(player.pos.x, player.pos.y - 60);
       }
@@ -3419,7 +2991,6 @@ function putToSleep(): void {
   world.top = sleepTopWithLureSpawn(world.top, -280, farBottom);
   world.btm = sleep(world.btm, -280, farBottom);
   world.npc = sleep(world.npc, -300, farBottom);
-  world.enemy = sleepEnemies(world.enemy, -320, farBottom);
 }
 
 function sleepTopWithLureSpawn(entities: Entity[], minY: number, maxY: number): Entity[] {
@@ -3427,14 +2998,6 @@ function sleepTopWithLureSpawn(entities: Entity[], minY: number, maxY: number): 
   const sleeping: Entity[] = [];
 
   for (const entity of entities) {
-    const lureLeftScreen = !entity.sleep && entity.type === "lure" && entity.y + entity.h < 0;
-    if (lureLeftScreen) {
-      spawnEnemyFromLure(entity.x, entity.y + 32);
-      entity.sleep = true;
-      sleeping.push(entity);
-      continue;
-    }
-
     const alive = entity.y > minY && entity.y < maxY && !entity.sleep;
     if (alive) {
       active.push(entity);
@@ -3446,11 +3009,6 @@ function sleepTopWithLureSpawn(entities: Entity[], minY: number, maxY: number): 
 
   world.sleeping.push(...sleeping);
   return active;
-}
-
-function spawnEnemyFromLure(x: number, y: number): void {
-  const enemy = buildObject("enemy", x, y, "chase");
-  initEnemyRuntime(enemy);
 }
 
 function sleep(entities: Entity[], minY: number, maxY: number): Entity[] {
@@ -3471,30 +3029,6 @@ function sleep(entities: Entity[], minY: number, maxY: number): Entity[] {
   return active;
 }
 
-function sleepEnemies(entities: Entity[], minY: number, maxY: number): Entity[] {
-  const active: Entity[] = [];
-  const sleeping: Entity[] = [];
-
-  for (const entity of entities) {
-    const alive = entity.y > minY && entity.y < maxY && !entity.sleep;
-    if (alive) {
-      active.push(entity);
-    } else {
-      entity.sleep = true;
-      sleeping.push(entity);
-      enemyRuntime.delete(entity.id);
-      const fire = fireByEnemyId.get(entity.id);
-      if (fire) {
-        fire.sleep = true;
-        fireByEnemyId.delete(entity.id);
-      }
-    }
-  }
-
-  world.sleeping.push(...sleeping);
-  return active;
-}
-
 function sleepAll(entities: Entity[]): Entity[] {
   for (const entity of entities) {
     entity.sleep = true;
@@ -3504,7 +3038,7 @@ function sleepAll(entities: Entity[]): Entity[] {
 }
 
 function mergeAll(): void {
-  const sortable = [...world.btm, ...world.top, ...world.npc, ...world.enemy];
+  const sortable = [...world.btm, ...world.top, ...world.npc];
   sortable.sort((a, b) => a.y + a.h - (b.y + b.h));
   world.all = sortable;
 }
@@ -3548,10 +3082,6 @@ function spawnBoostTrailFx(): void {
   if (fx.boostTrail.length > FX_PARTICLE_MAX) {
     fx.boostTrail.splice(0, fx.boostTrail.length - FX_PARTICLE_MAX);
   }
-}
-
-function spawnDangerFx(x: number, y: number): void {
-  pushFxParticle("danger", x, y, 0, -14, 16, 0.45);
 }
 
 function spawnPickupFx(x: number, y: number, pickup: "life" | "boost"): void {
@@ -3710,174 +3240,17 @@ function resetCameraShake(): void {
   cameraShakeOffset.y = 0;
 }
 
-function startWolfEncounter(): void {
-  if (scene !== "playing" || wolfEncounter.triggered) {
-    return;
-  }
-
-  wolfEncounter.triggered = true;
-  wolfEncounter.active = true;
-  wolfEncounter.phase = "rise";
-  wolfEncounter.timer = 0;
-  wolfEncounter.targetOffsetY = 0;
-  wolfEncounter.enemyId = 0;
-  cameraEventOffset.x = 0;
-  cameraEventOffset.y = 0;
-  pendingPauseToggle = false;
-  resetCameraShake();
-
-  player.vel.x = 0;
-  player.vel.y = 0;
-  player.acc.x = 0;
-  player.acc.y = 0;
-  player.pos.x = session.x;
-  player.pos.y = session.y;
-  player.hitbox.x = player.pos.x - player.hitbox.w / 2;
-  player.hitbox.y = player.pos.y - player.hitbox.h / 2;
-
-  const wolfX = session.x - WOLF_FRAME.w * 0.5;
-  const wolfY = -WOLF_FRAME.h - WOLF_EVENT_SPAWN_MARGIN;
-  const wolf = buildObject("enemy", wolfX, wolfY, "wolf");
-  wolf.hazard = false;
-  wolf.solid = false;
-  wolf.collectible = "none";
-  wolfEncounter.enemyId = wolf.id;
-  syncWolfEncounterEntity(wolf);
-  wolfEncounter.targetOffsetY = Math.max(0, WOLF_EVENT_CAMERA_TOP_PADDING - wolf.y);
-  mergeAll();
-}
-
-function updateWolfEncounter(dt: number): void {
-  if (!wolfEncounter.active) {
-    cameraEventOffset.x = 0;
-    cameraEventOffset.y = 0;
-    return;
-  }
-
-  player.vel.x = 0;
-  player.vel.y = 0;
-  player.acc.x = 0;
-  player.acc.y = 0;
-  player.pos.x = session.x;
-  player.pos.y = session.y;
-  player.hitbox.x = player.pos.x - player.hitbox.w / 2;
-  player.hitbox.y = player.pos.y - player.hitbox.h / 2;
-
-  const wolf = getWolfEncounterEntity();
-  if (wolf) {
-    syncWolfEncounterEntity(wolf);
-    wolfEncounter.targetOffsetY = Math.max(0, WOLF_EVENT_CAMERA_TOP_PADDING - wolf.y);
-  }
-
-  if (wolfEncounter.phase === "rise") {
-    wolfEncounter.timer += dt;
-    const t = clamp(wolfEncounter.timer / WOLF_EVENT_RISE_DURATION, 0, 1);
-    cameraEventOffset.y = Math.round(wolfEncounter.targetOffsetY * easeOutCubic(t));
-    if (t >= 1) {
-      wolfEncounter.phase = "return";
-      wolfEncounter.timer = 0;
-    }
-    return;
-  }
-
-  if (wolfEncounter.phase === "return") {
-    wolfEncounter.timer += dt;
-    const t = clamp(wolfEncounter.timer / WOLF_EVENT_RETURN_DURATION, 0, 1);
-    cameraEventOffset.y = Math.round(wolfEncounter.targetOffsetY * (1 - easeOutCubic(t)));
-    if (t >= 1) {
-      cameraEventOffset.y = 0;
-      wolfEncounter.active = false;
-      wolfEncounter.phase = "inactive";
-      wolfEncounter.timer = 0;
-      if (wolf) {
-        wolf.hazard = true;
-        wolf.solid = true;
-        wolf.collectible = "none";
-      }
-      mergeAll();
-    }
-  }
-}
-
-function syncWolfEncounterEntity(wolf: Entity): void {
-  const centerX = player.pos.x - wolf.w * 0.5;
-  if (wolfEncounter.active && wolfEncounter.phase === "rise") {
-    const riseProgress = clamp(wolfEncounter.timer / WOLF_EVENT_RISE_DURATION, 0, 1);
-    const amplitude =
-      WOLF_EVENT_SHAKE_MIN_AMPLITUDE +
-      (WOLF_EVENT_SHAKE_MAX_AMPLITUDE - WOLF_EVENT_SHAKE_MIN_AMPLITUDE) * riseProgress;
-    const wobble = Math.sin(wolfEncounter.timer * Math.PI * 2 * WOLF_EVENT_SHAKE_FREQUENCY) * amplitude;
-    wolf.x = centerX + wobble;
-  } else {
-    wolf.x = centerX;
-  }
-  wolf.y = -wolf.h - WOLF_EVENT_SPAWN_MARGIN;
-}
-
-function isWolfEncounterVisible(entity: Entity): boolean {
-  if (!(entity.type === "enemy" && entity.variant === "wolf")) {
-    return true;
-  }
-  if (!(wolfEncounter.active && wolfEncounter.phase === "rise")) {
-    return true;
-  }
-  const t = wolfEncounter.timer * WOLF_EVENT_BLINK_FREQUENCY;
-  const phase = t - Math.floor(t);
-  return phase < WOLF_EVENT_BLINK_VISIBLE_RATIO;
-}
-
-function getWolfEncounterEntity(): Entity | null {
-  if (wolfEncounter.enemyId <= 0) {
-    return null;
-  }
-  const wolf = world.enemy.find((entity) => entity.id === wolfEncounter.enemyId && !entity.sleep);
-  return wolf ?? null;
-}
-
-function clearWolfEncounterEntity(): void {
-  const wolf = getWolfEncounterEntity();
-  if (!wolf) {
-    wolfEncounter.enemyId = 0;
-    return;
-  }
-
-  wolf.sleep = true;
-  world.enemy = world.enemy.filter((entity) => entity.id !== wolf.id);
-  if (!world.sleeping.some((entity) => entity.id === wolf.id)) {
-    world.sleeping.push(wolf);
-  }
-  enemyRuntime.delete(wolf.id);
-  const fire = fireByEnemyId.get(wolf.id);
-  if (fire) {
-    fire.sleep = true;
-    fireByEnemyId.delete(wolf.id);
-  }
-
-  wolfEncounter.enemyId = 0;
-}
-
-function resetWolfEncounterState(): void {
-  wolfEncounter.triggered = false;
-  wolfEncounter.active = false;
-  wolfEncounter.phase = "inactive";
-  wolfEncounter.timer = 0;
-  wolfEncounter.targetOffsetY = 0;
-  wolfEncounter.enemyId = 0;
-  cameraEventOffset.x = 0;
-  cameraEventOffset.y = 0;
-}
-
 function getCameraDrawPad(): number {
-  const dx = cameraShakeOffset.x + cameraEventOffset.x;
-  const dy = cameraShakeOffset.y + cameraEventOffset.y;
+  const dx = cameraShakeOffset.x;
+  const dy = cameraShakeOffset.y;
   return CAMERA_SHAKE_DRAW_PAD + Math.ceil(Math.max(Math.abs(dx), Math.abs(dy)));
 }
 
 function render(): void {
   ctx.clearRect(0, 0, session.w, session.h);
   const gameplayScene = scene === "playing" || scene === "paused";
-  const cameraOffsetX = gameplayScene ? cameraShakeOffset.x + cameraEventOffset.x : 0;
-  const cameraOffsetY = gameplayScene ? cameraShakeOffset.y + cameraEventOffset.y : 0;
+  const cameraOffsetX = gameplayScene ? cameraShakeOffset.x : 0;
+  const cameraOffsetY = gameplayScene ? cameraShakeOffset.y : 0;
   const cameraOffsetActive = gameplayScene && (cameraOffsetX !== 0 || cameraOffsetY !== 0);
   if (cameraOffsetActive) {
     ctx.save();
@@ -3889,7 +3262,6 @@ function render(): void {
   for (const entity of world.all) {
     drawEntity(entity);
   }
-  drawFireEntities();
   drawBoostCrashFlashFx();
 
   drawBoostTrailFx();
@@ -4153,30 +3525,23 @@ function easeOutCubic(t: number): number {
 }
 
 function drawEntity(entity: Entity): void {
-  if (!isWolfEncounterVisible(entity)) {
+  if (entity.type === "boss" && bossSpriteSheet.complete && bossSpriteSheet.naturalWidth > 0) {
+    const frame = getBossFrameRect();
+    const prevSmooth = ctx.imageSmoothingEnabled;
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(
+      bossSpriteSheet,
+      frame.x,
+      frame.y,
+      frame.w,
+      frame.h,
+      Math.floor(entity.x),
+      Math.floor(entity.y),
+      entity.w,
+      entity.h
+    );
+    ctx.imageSmoothingEnabled = prevSmooth;
     return;
-  }
-
-  if (entity.type === "enemy") {
-    const spriteSheet = entity.variant === "wolf" ? wolfSpriteSheet : enemySpriteSheet;
-    if (spriteSheet.complete && spriteSheet.naturalWidth > 0) {
-      const frame = getEnemyFrameRect(entity.variant);
-      const prevSmooth = ctx.imageSmoothingEnabled;
-      ctx.imageSmoothingEnabled = false;
-      ctx.drawImage(
-        spriteSheet,
-        frame.x,
-        frame.y,
-        frame.w,
-        frame.h,
-        Math.floor(entity.x),
-        Math.floor(entity.y),
-        entity.w,
-        entity.h
-      );
-      ctx.imageSmoothingEnabled = prevSmooth;
-      return;
-    }
   }
   if (entity.type === "rock" && rocksSpriteSheet.complete && rocksSpriteSheet.naturalWidth > 0) {
     const frame = getRockFrameRect(entity.variant);
@@ -4282,6 +3647,10 @@ function drawBoostCrashFlashFx(): void {
     if (alpha <= 0) {
       continue;
     }
+    if (flash.type === "boss" && bossSpriteSheet.complete && bossSpriteSheet.naturalWidth > 0) {
+      drawWhiteTintedSpriteFrame(bossSpriteSheet, BOSS_FRAME, flash.x, flash.y, flash.w, flash.h, alpha);
+      continue;
+    }
     if (flash.type === "rock" && rocksSpriteSheet.complete && rocksSpriteSheet.naturalWidth > 0) {
       const frame = getRockFrameRect(flash.variant);
       drawWhiteTintedSpriteFrame(rocksSpriteSheet, frame, flash.x, flash.y, flash.w, flash.h, alpha);
@@ -4336,34 +3705,6 @@ function drawWhiteTintedSpriteFrame(
   ctx.fillStyle = WHITE;
   ctx.fillRect(Math.floor(x), Math.floor(y), w, h);
   ctx.restore();
-}
-
-function drawFireEntities(): void {
-  if (!(fireSpriteSheet.complete && fireSpriteSheet.naturalWidth > 0)) {
-    return;
-  }
-  const prevSmooth = ctx.imageSmoothingEnabled;
-  ctx.imageSmoothingEnabled = false;
-  for (const fire of fireEntities) {
-    if (fire.sleep) {
-      continue;
-    }
-    const frame = FIRE_FRAMES[Math.floor(fire.age * FIRE_ANIMATION_FPS) % FIRE_FRAMES.length] ?? FIRE_FRAMES[0];
-    const dx = fire.x + (fire.w - frame.w) * 0.5;
-    const dy = fire.y + (fire.h - frame.h) * 0.5;
-    ctx.drawImage(
-      fireSpriteSheet,
-      frame.x,
-      frame.y,
-      frame.w,
-      frame.h,
-      Math.floor(dx),
-      Math.floor(dy),
-      frame.w,
-      frame.h
-    );
-  }
-  ctx.imageSmoothingEnabled = prevSmooth;
 }
 
 function drawPlayerSprite(): void {
